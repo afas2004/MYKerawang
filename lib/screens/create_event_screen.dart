@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
+import 'image_preview_screen.dart';
 
 class CreateEventScreen extends StatefulWidget {
   const CreateEventScreen({super.key});
@@ -17,9 +18,8 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
   DateTime? _selectedDate;
   File? _imageFile;
   bool _isLoading = false;
-  String _privacy = 'Public'; // Public vs Club-Only
+  String _privacy = 'Public';
 
-  // Colors from code.html
   final primaryColor = const Color(0xFF00A7C7);
   final bgColor = const Color(0xFFF8F9FA);
 
@@ -41,16 +41,63 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
     }
   }
 
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      final picker = ImagePicker();
+      final pickedFile = await picker.pickImage(source: source);
+      if (pickedFile != null) {
+        setState(() => _imageFile = File(pickedFile.path));
+      }
+    } catch (e) {
+      debugPrint("Error picking image: $e");
+    }
+  }
+
+  void _showImageOptions() {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera),
+              title: const Text('Camera'),
+              onTap: () { Navigator.pop(context); _pickImage(ImageSource.camera); },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Gallery'),
+              onTap: () { Navigator.pop(context); _pickImage(ImageSource.gallery); },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _submit() async {
-    if (_titleController.text.isEmpty || _selectedDate == null) return;
+    if (_titleController.text.isEmpty || _selectedDate == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please fill title and date')));
+      return;
+    }
     
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('You must be logged in.')));
+      return;
+    }
+
     setState(() => _isLoading = true);
-    final supabase = Supabase.instance.client;
 
     try {
+      final supabase = Supabase.instance.client;
       String? imageUrl;
+      
       if (_imageFile != null) {
-        final path = 'events/${DateTime.now().millisecondsSinceEpoch}.jpg';
+        final fileExt = _imageFile!.path.split('.').last;
+        final path = 'events/${DateTime.now().millisecondsSinceEpoch}.$fileExt';
+        
+        // Ensure 'images' bucket exists in dashboard
         await supabase.storage.from('images').upload(path, _imageFile!);
         imageUrl = supabase.storage.from('images').getPublicUrl(path);
       }
@@ -62,14 +109,26 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
         'start_datetime': _selectedDate!.toIso8601String(),
         'image_url': imageUrl,
         'is_public': _privacy == 'Public',
-        'organizer_id': supabase.auth.currentUser?.id,
+        'organizer_id': user.id,
       });
 
-      if (mounted) Navigator.pop(context);
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Event Published!')));
+      }
+    } on StorageException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Storage Error: ${e.message}. Bucket "images" missing?'),
+          backgroundColor: Colors.red,
+        ));
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -95,7 +154,7 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
             GestureDetector(
               onTap: _pickDate,
               child: AbsorbPointer(
-                child: _input(TextEditingController(text: _selectedDate?.toString().split('.')[0] ?? ''), "Select date", icon: Icons.calendar_today),
+                child: _input(TextEditingController(text: _selectedDate?.toLocal().toString().split('.')[0] ?? ''), "Select date", icon: Icons.calendar_today),
               ),
             ),
             
@@ -123,14 +182,56 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
             ),
 
             const SizedBox(height: 20),
+            
             _label("Event Media"),
-            Row(
-              children: [
-                Expanded(child: _mediaButton(Icons.photo_camera, "Camera")),
-                const SizedBox(width: 12),
-                Expanded(child: _mediaButton(Icons.photo_library, "Gallery", isGallery: true)),
-              ],
+            GestureDetector(
+              onTap: () {
+                if (_imageFile == null) {
+                  _showImageOptions();
+                } else {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => ImagePreviewScreen(imageFile: _imageFile)));
+                }
+              },
+              child: Container(
+                height: 180,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade300, style: BorderStyle.solid),
+                  image: _imageFile != null ? DecorationImage(image: FileImage(_imageFile!), fit: BoxFit.cover) : null,
+                ),
+                child: _imageFile == null 
+                    ? Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.add_a_photo, color: primaryColor, size: 40),
+                          const SizedBox(height: 8),
+                          Text("Add Event Photo", style: TextStyle(color: primaryColor, fontWeight: FontWeight.bold)),
+                        ],
+                      )
+                    : null,
+              ),
             ),
+            if (_imageFile != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton.icon(
+                      onPressed: _showImageOptions,
+                      icon: const Icon(Icons.edit),
+                      label: const Text("Change"),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => setState(() => _imageFile = null),
+                      icon: const Icon(Icons.delete, color: Colors.red),
+                      label: const Text("Remove", style: TextStyle(color: Colors.red)),
+                    ),
+                  ],
+                ),
+              ),
 
             const SizedBox(height: 20),
             _label("Privacy"),
@@ -185,32 +286,6 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
       fillColor: Colors.white,
       enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade300)),
       focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: primaryColor)),
-    );
-  }
-
-  Widget _mediaButton(IconData icon, String text, {bool isGallery = false}) {
-    return GestureDetector(
-      onTap: () async {
-        final src = isGallery ? ImageSource.gallery : ImageSource.camera;
-        final f = await ImagePicker().pickImage(source: src);
-        if (f != null) setState(() => _imageFile = File(f.path));
-      },
-      child: Container(
-        height: 100,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey.shade300, style: BorderStyle.solid),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: primaryColor, size: 30),
-            const SizedBox(height: 4),
-            Text(text, style: TextStyle(color: primaryColor, fontWeight: FontWeight.w500))
-          ],
-        ),
-      ),
     );
   }
 

@@ -171,7 +171,7 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: FloatingActionButton(
         onPressed: () {
           Navigator.push(
             context,
@@ -179,8 +179,7 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
           );
         },
         backgroundColor: marketplaceColor,
-        icon: const Icon(Icons.add, color: Colors.white),
-        label: const Text("Sell Item", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        child:const Icon(Icons.add, color: Colors.white),
       ),
     );
   }
