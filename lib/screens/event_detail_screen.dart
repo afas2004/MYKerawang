@@ -1,13 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:photo_view/photo_view.dart';
+import 'package:share_plus/share_plus.dart';
 import 'create_event_screen.dart'; 
 
 class EventDetailScreen extends StatefulWidget {
   final Map<String, dynamic>? event; 
   final String? eventId; 
+  final bool isOwnerOverride; // <--- THIS WAS MISSING!
 
-  const EventDetailScreen({super.key, this.event, this.eventId});
+  const EventDetailScreen({
+    super.key, 
+    this.event, 
+    this.eventId,
+    this.isOwnerOverride = false, // <--- DEFAULT VALUE
+  });
 
   @override
   State<EventDetailScreen> createState() => _EventDetailScreenState();
@@ -29,7 +37,6 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   Future<void> _loadEventData() async {
     final supabase = Supabase.instance.client;
     try {
-      // 1. Fetch Data if needed
       if (widget.event != null) {
         _eventData = widget.event;
       } else if (widget.eventId != null) {
@@ -37,23 +44,18 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
         _eventData = data;
       }
 
-      // 2. Fetch Counts
       final countRes = await supabase.from('event_attendees').count(CountOption.exact).eq('event_id', _eventData!['id']);
       
       final user = supabase.auth.currentUser;
       bool joined = false;
-      bool owner = false;
+      bool owner = widget.isOwnerOverride; // <--- USE THE KEY HERE
       
       if (user != null) {
-        // --- DEBUGGING LOGIC ---
-        final orgId = _eventData!['organizer_id'];
-        print("DEBUG: My ID: ${user.id}");
-        print("DEBUG: Event Org ID: $orgId");
+        // Only check ID if the Override key wasn't used
+        if (!owner) {
+             owner = (user.id == _eventData!['organizer_id']); 
+        }
         
-        // Check Ownership
-        owner = (user.id == orgId); 
-        
-        // Check Join Status
         final myJoin = await supabase.from('event_attendees').select().eq('event_id', _eventData!['id']).eq('user_id', user.id).maybeSingle();
         joined = myJoin != null;
       }
@@ -67,7 +69,6 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
         });
       }
     } catch (e) {
-      print("Error loading event: $e");
       if (mounted) setState(() => _isLoading = false);
     }
   }
@@ -89,11 +90,11 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       try {
         await Supabase.instance.client.from('events').delete().eq('id', _eventData!['id']);
         if (mounted) {
-          Navigator.pop(context, true); // Return true to refresh profile
+          Navigator.pop(context, true); 
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Event deleted")));
         }
       } catch (e) {
-        if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error deleting: $e")));
+        if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
       }
     }
   }
@@ -157,14 +158,6 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                   const Text("About", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   Text(_eventData!['description'] ?? 'No description provided.', style: TextStyle(color: Colors.grey[800], height: 1.5)),
-                  
-                  // DEBUG INFO (REMOVE LATER)
-                  if (!_isOwner) 
-                    Padding(
-                      padding: const EdgeInsets.only(top: 20),
-                      child: Text("Debug: You are not the owner.\nThis event belongs to: ${_eventData!['organizer_id']}", style: const TextStyle(fontSize: 10, color: Colors.grey)),
-                    ),
-                    
                   const SizedBox(height: 100),
                 ],
               ),
@@ -172,8 +165,6 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
           )
         ],
       ),
-      
-      // BOTTOM SHEET
       bottomSheet: Container(
         padding: const EdgeInsets.all(16),
         width: double.infinity,
@@ -192,27 +183,14 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                 Expanded(
                   child: ElevatedButton(
                     onPressed: () async {
-                       // Navigate to Edit Event
                        final result = await Navigator.push(
                          context, 
                          MaterialPageRoute(builder: (_) => CreateEventScreen(eventToEdit: _eventData))
                        );
-                       
-                       // REFRESH LOGIC: If we updated, we must re-fetch the data immediately
-                       if (result == true) {
-                          setState(() => _isLoading = true); // Show loading
-                          
-                          // Re-fetch strictly from DB to get fresh data
-                          final newData = await Supabase.instance.client
-                              .from('events')
-                              .select()
-                              .eq('id', _eventData!['id'])
-                              .single();
-                              
-                          setState(() {
-                             _eventData = newData;
-                             _isLoading = false;
-                          });
+                       if (result == true && mounted) {
+                          setState(() => _isLoading = true);
+                          final newData = await Supabase.instance.client.from('events').select().eq('id', _eventData!['id']).single();
+                          setState(() { _eventData = newData; _isLoading = false; });
                        }
                     },
                     style: ElevatedButton.styleFrom(backgroundColor: primary, foregroundColor: Colors.white),

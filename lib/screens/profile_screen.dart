@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:mykerawang/screens/settings_screen.dart'; // Make sure this exists
+import 'settings_screen.dart';
 import 'edit_profile_screen.dart';
 import 'item_detail_screen.dart';
-import 'event_detail_screen.dart'; // Create/Import this
+import 'event_detail_screen.dart';
 import 'profile_cubit.dart';
 
 class ProfileScreen extends StatelessWidget {
@@ -79,7 +79,7 @@ class ProfileView extends StatelessWidget {
                 
                 const SizedBox(height: 30),
                 
-                // --- MARKETPLACE SECTION (Horizontal Scroll) ---
+                // --- MARKETPLACE SECTION ---
                 _sectionTitle("My Market Listings"),
                 if (state.listings.isEmpty)
                   _emptyState("No items listed yet")
@@ -99,16 +99,16 @@ class ProfileView extends StatelessWidget {
                           subtitle: "RM ${item['price']}",
                           onTap: () async {
                              await Navigator.push(context, MaterialPageRoute(builder: (_) => ItemDetailScreen(item: item)));
-                             if (context.mounted) context.read<ProfileCubit>().loadProfile(); // Refresh on return
+                             if (context.mounted) context.read<ProfileCubit>().loadProfile(); 
                           }
                         );
                       },
                     ),
                   ),
 
-                const Divider(height: 50, thickness: 8, color: Color(0xFFF5F5F5)), // The Gap
+                const Divider(height: 50, thickness: 8, color: Color(0xFFF5F5F5)), 
 
-                // --- EVENTS SECTION (Horizontal Scroll) ---
+                // --- EVENTS SECTION ---
                 _sectionTitle("My Hosted Events"),
                 if (state.events.isEmpty)
                   _emptyState("No events created yet")
@@ -120,15 +120,24 @@ class ProfileView extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                       itemCount: state.events.length,
                       itemBuilder: (context, index) {
-                        final event = state.events[index];
+                        final event = state.events[index]; // <--- 'event' is defined HERE
                         return _buildHorizontalCard(
                           context, 
                           imageUrl: event['image_url'], 
                           title: event['title'], 
-                          subtitle: event['date'] ?? 'Event',
+                          subtitle: event['start_datetime'] ?? 'Event',
+                          // --- THE LOGIC GOES HERE, NOT AT THE BOTTOM ---
                           onTap: () async {
-                             await Navigator.push(context, MaterialPageRoute(builder: (_) => EventDetailScreen(event: event)));
-                             if (context.mounted) context.read<ProfileCubit>().loadProfile(); // Refresh on return
+                             await Navigator.push(
+                               context, 
+                               MaterialPageRoute(
+                                 builder: (_) => EventDetailScreen(
+                                   event: event,
+                                   isOwnerOverride: true, // <--- MASTER KEY
+                                 )
+                               )
+                             );
+                             if (context.mounted) context.read<ProfileCubit>().loadProfile(); 
                           }
                         );
                       },
@@ -155,12 +164,13 @@ class ProfileView extends StatelessWidget {
     return Padding(padding: const EdgeInsets.all(16), child: Text(text, style: const TextStyle(color: Colors.grey)));
   }
 
+  // --- THIS FUNCTION IS NOW SIMPLE AGAIN ---
   Widget _buildHorizontalCard(BuildContext context, {required String? imageUrl, required String title, required String subtitle, required VoidCallback onTap}) {
     return Container(
       width: 150,
       margin: const EdgeInsets.symmetric(horizontal: 6),
       child: GestureDetector(
-        onTap: onTap,
+        onTap: onTap, // Just uses the function passed to it
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

@@ -5,7 +5,14 @@ import 'package:intl/intl.dart';
 import 'database_helper.dart';
 import 'screens/marketplace_screen.dart';
 import 'screens/events_screen.dart';
-import 'screens/profile_screen.dart';
+import 'screens/profile_screen.dart'; // <--- THIS SHOULD WORK NOW
+import 'screens/item_detail_screen.dart';
+import 'screens/event_detail_screen.dart';
+import 'screens/login_screen.dart';
+
+// --- THE FIX IS HERE: We hide the ghost class so main.dart doesn't get confused ---
+import 'screens/profile_screen.dart' hide EventDetailScreen; 
+
 import 'screens/item_detail_screen.dart';
 import 'screens/event_detail_screen.dart';
 import 'screens/login_screen.dart';
@@ -29,7 +36,7 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFFAFAFA),
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF5B3E96)), // Deep Purple
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF5B3E96)), 
         textTheme: GoogleFonts.poppinsTextTheme(),
       ),
       home: const AuthGate(),
@@ -97,7 +104,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadData() async {
-    // 1. Try Load from Cache first
     final cachedEvents = await DatabaseHelper.instance.getCachedEvents();
     final cachedListings = await DatabaseHelper.instance.getCachedListings();
     
@@ -109,7 +115,6 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     }
 
-    // 2. Fetch Fresh Data & Update Cache
     try {
       final freshEvents = await Supabase.instance.client
           .from('events')
@@ -140,7 +145,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // 1. Clean App Bar (No Welcome/Notif)
     return Scaffold(
       appBar: AppBar(
         title: const Text("MYKerawang", style: TextStyle(fontWeight: FontWeight.bold)),
@@ -153,12 +157,8 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _sectionHeader("Happening Soon", () {
-                   // 3. See All -> Switch Tab logic (simplified for snippet)
-                }),
+                _sectionHeader("Happening Soon", () {}),
                 const SizedBox(height: 12),
-                
-                // 2. Refined Date/Time & Horizontal Scroll
                 SizedBox(
                   height: 220,
                   child: ListView.separated(
@@ -176,7 +176,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(16),
                             boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)],
-                            border: Border.all(color: Colors.purple.withOpacity(0.1)) // 7. Color Lining
+                            border: Border.all(color: Colors.purple.withOpacity(0.1))
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -205,12 +205,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     },
                   ),
                 ),
-
                 const SizedBox(height: 24),
                 _sectionHeader("New in Marketplace", () {}),
                 const SizedBox(height: 12),
-
-                // 4. Horizontal Marketplace Scroll
                 SizedBox(
                   height: 200,
                   child: ListView.separated(
@@ -226,7 +223,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.orange.withOpacity(0.2)), // 7. Color Lining
+                            border: Border.all(color: Colors.orange.withOpacity(0.2)), 
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
