@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'notifications_screen.dart';
+
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
@@ -19,13 +21,29 @@ class HomeScreen extends StatelessWidget {
                 padding: const EdgeInsets.all(16.0),
                 child: Row(
                   children: [
-                    const CircleAvatar(backgroundImage: NetworkImage('https://i.pravatar.cc/150?img=5')), // Placeholder
+                    CircleAvatar(
+                      radius: 24,
+                      backgroundColor: Colors.grey[200],
+                      // 1. Try to load image
+                      backgroundImage: const NetworkImage('https://i.pravatar.cc/150?img=5'), 
+                      // 2. If it fails, this function catches the crash
+                      onBackgroundImageError: (exception, stackTrace) {
+                        debugPrint("Avatar load failed");
+                      },
+                      // 3. Show an icon on top if the image fails (Background becomes visible)
+                      child: const Icon(Icons.person, color: Colors.grey),
+                    ),
                     const SizedBox(width: 12),
                     const Text('Welcome, Aina!', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     const Spacer(),
                     Stack(
                       children: [
-                        IconButton(icon: const Icon(Icons.notifications_outlined), onPressed: () {}),
+                        IconButton(
+                          icon: const Icon(Icons.notifications_outlined), 
+                          onPressed: () {
+                            Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationsScreen()));
+                          }
+                        ),
                         Positioned(right: 8, top: 8, child: Container(padding: const EdgeInsets.all(4), decoration: const BoxDecoration(color: Colors.amber, shape: BoxShape.circle), child: const Text('3', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold))))
                       ],
                     )

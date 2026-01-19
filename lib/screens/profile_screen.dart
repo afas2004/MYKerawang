@@ -178,8 +178,18 @@ class ProfileView extends StatelessWidget {
               borderRadius: BorderRadius.circular(12),
               child: Image.network(
                 imageUrl ?? 'https://via.placeholder.com/150',
-                height: 120, width: 150, fit: BoxFit.cover,
-                errorBuilder: (_,__,___) => Container(height: 120, color: Colors.grey[200], child: const Icon(Icons.broken_image)),
+                height: 120, 
+                width: 150, 
+                fit: BoxFit.cover,
+                // ADD THIS PROTECTOR:
+                errorBuilder: (context, error, stackTrace) {
+                  return Container(
+                    height: 120,
+                    width: 150,
+                    color: Colors.grey[200],
+                    child: const Center(child: Icon(Icons.image_not_supported, color: Colors.grey)),
+                  );
+                },
               ),
             ),
             const SizedBox(height: 8),

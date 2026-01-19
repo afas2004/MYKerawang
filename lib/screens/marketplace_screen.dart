@@ -126,9 +126,17 @@ class _MarketplaceViewState extends State<MarketplaceView> {
                                             borderRadius: const BorderRadius.vertical(
                                                 top: Radius.circular(12)),
                                             child: Image.network(
-                                                item['image_url'] ?? '',
-                                                fit: BoxFit.cover,
-                                                width: double.infinity),
+                                              item['image_url'] ?? '',
+                                              fit: BoxFit.cover,
+                                              width: double.infinity,
+                                              // ADD THIS PROTECTOR:
+                                              errorBuilder: (context, error, stackTrace) {
+                                                return Container(
+                                                  color: Colors.grey[200],
+                                                  child: const Center(child: Icon(Icons.store_mall_directory_outlined, color: Colors.grey)),
+                                                );
+                                              },
+                                            ),
                                           ),
                                         ),
                                         Padding(

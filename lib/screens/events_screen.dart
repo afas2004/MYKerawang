@@ -131,11 +131,21 @@ class _EventsViewState extends State<EventsView> {
                                             height: 180,
                                             width: double.infinity,
                                             fit: BoxFit.cover,
-                                            errorBuilder: (c, o, s) => Container(
-                                              height: 180,
-                                              color: Colors.grey[300],
-                                              child: const Center(child: Icon(Icons.broken_image)),
-                                            ),
+                                            // ADD THIS PROTECTOR:
+                                            errorBuilder:
+                                                (context, error, stackTrace) {
+                                                  return Container(
+                                                    height: 180,
+                                                    color: Colors.grey[200],
+                                                    child: const Center(
+                                                      child: Icon(
+                                                        Icons.event_busy,
+                                                        color: Colors.grey,
+                                                        size: 40,
+                                                      ),
+                                                    ),
+                                                  );
+                                                },
                                           ),
                                         ),
                                         Padding(

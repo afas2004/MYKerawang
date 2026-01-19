@@ -2,19 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:photo_view/photo_view.dart';
-import 'package:share_plus/share_plus.dart';
 import 'create_event_screen.dart'; 
 
 class EventDetailScreen extends StatefulWidget {
   final Map<String, dynamic>? event; 
   final String? eventId; 
-  final bool isOwnerOverride; // <--- THIS WAS MISSING!
+  final bool isOwnerOverride; 
 
   const EventDetailScreen({
     super.key, 
     this.event, 
     this.eventId,
-    this.isOwnerOverride = false, // <--- DEFAULT VALUE
+    this.isOwnerOverride = false,
   });
 
   @override
@@ -23,6 +22,7 @@ class EventDetailScreen extends StatefulWidget {
 
 class _EventDetailScreenState extends State<EventDetailScreen> {
   Map<String, dynamic>? _eventData;
+  Map<String, dynamic>? _organizerProfile; // <--- NEW: Store organizer info
   bool _isLoading = true;
   bool _isJoined = false;
   int _attendeeCount = 0;
@@ -36,40 +36,84 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
 
   Future<void> _loadEventData() async {
     final supabase = Supabase.instance.client;
+    final user = supabase.auth.currentUser;
+
     try {
-      if (widget.event != null) {
-        _eventData = widget.event;
-      } else if (widget.eventId != null) {
-        final data = await supabase.from('events').select().eq('id', widget.eventId!).single();
-        _eventData = data;
+      // 1. Determine the Event ID
+      final String? idToFetch = widget.event?['id'] ?? widget.eventId;
+
+      if (idToFetch == null) {
+        debugPrint("Error: No Event ID found!");
+        if (mounted) setState(() => _isLoading = false); // STOP LOADING
+        return;
       }
 
-      final countRes = await supabase.from('event_attendees').count(CountOption.exact).eq('event_id', _eventData!['id']);
+      // 2. Fetch Fresh Event Data
+      final freshEventData = await supabase
+          .from('events')
+          .select()
+          .eq('id', idToFetch)
+          .single();
       
-      final user = supabase.auth.currentUser;
+      // 3. Get Organizer Profile
+      final organizer = await supabase
+          .from('profiles')
+          .select()
+          .eq('id', freshEventData['organizer_id'])
+          .maybeSingle();
+
+      // 4. FIX: "Manual" Count (Avoids HEAD 404 Error)
+      // Instead of .count(), we fetch the list of user_ids and check the length.
+      final attendeesList = await supabase
+          .from('event_attendees')
+          .select('user_id') // Fetch only IDs to be fast
+          .eq('event_id', idToFetch);
+      
+      final int realCount = (attendeesList as List).length;
+      
+      // 5. Check Ownership & Join Status
       bool joined = false;
-      bool owner = widget.isOwnerOverride; // <--- USE THE KEY HERE
+      bool owner = widget.isOwnerOverride; 
       
       if (user != null) {
-        // Only check ID if the Override key wasn't used
+        // Ownership Check
         if (!owner) {
-             owner = (user.id == _eventData!['organizer_id']); 
+             final userId = user.id.toString().trim();
+             // FIX: Use ( ?? '' ) to ensure we never trim a null value
+             final orgId = (freshEventData['organizer_id'] ?? '').toString().trim();
+             
+             owner = (userId == orgId && userId.isNotEmpty); 
+             
+             debugPrint("--- ID CHECK ---");
+             debugPrint("User: $userId");
+             debugPrint("Org : $orgId");
+             debugPrint("Match: $owner");
         }
-        
-        final myJoin = await supabase.from('event_attendees').select().eq('event_id', _eventData!['id']).eq('user_id', user.id).maybeSingle();
-        joined = myJoin != null;
+
+        // Joined Check (Fixed)
+        joined = (attendeesList as List).any((entry) => entry['user_id'] == user.id);
       }
 
       if (mounted) {
         setState(() {
-          _attendeeCount = countRes ?? 0;
+          _eventData = freshEventData;
+          _organizerProfile = organizer;
+          _attendeeCount = realCount; // Use our manual count
           _isJoined = joined;
           _isOwner = owner;
           _isLoading = false;
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
+      debugPrint("Error loading event: $e");
+      // CRITICAL FIX: Ensure loading stops even on error, and handle null data in UI
+      if (mounted) {
+        setState(() {
+           _isLoading = false; 
+           // If we failed to get data, _eventData might still be null.
+           // The build method needs to handle this.
+        });
+      }
     }
   }
 
@@ -123,7 +167,18 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading || _eventData == null) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    // 1. Still loading? Show Spinner
+if (_isLoading) {
+  return const Scaffold(body: Center(child: CircularProgressIndicator()));
+}
+
+// 2. Loading finished but Data is missing? Show Error (Stops Infinite Buffer)
+if (_eventData == null) {
+  return Scaffold(
+    appBar: AppBar(),
+    body: const Center(child: Text("Failed to load event. Please try again.")),
+  );
+}
 
     final primary = const Color(0xFFE02097);
     final start = DateTime.parse(_eventData!['start_datetime']);
@@ -136,10 +191,22 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
             expandedHeight: 300,
             pinned: true,
             flexibleSpace: FlexibleSpaceBar(
-              background: Image.network(
-                _eventData!['image_url'] ?? '', 
-                fit: BoxFit.cover,
-                errorBuilder: (_,__,___) => Container(color: Colors.grey[200], child: const Icon(Icons.broken_image)),
+              // ZOOMABLE IMAGE (Consistency Update 1)
+              background: GestureDetector(
+                onTap: () {
+                   Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(
+                    backgroundColor: Colors.black,
+                    appBar: AppBar(backgroundColor: Colors.transparent, iconTheme: const IconThemeData(color: Colors.white)),
+                    body: PhotoView(imageProvider: NetworkImage(_eventData!['image_url'] ?? '')),
+                  )));
+                },
+                child: Image.network(
+                  _eventData!['image_url'] ?? '', 
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Container(color: Colors.grey[200], child: const Center(child: Icon(Icons.broken_image, size: 50, color: Colors.grey)));
+                  },
+                ),
               ),
             ),
           ),
@@ -154,6 +221,30 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                   _infoRow(Icons.calendar_month, timeString, primary),
                   _infoRow(Icons.location_on, _eventData!['location'] ?? 'UiTM Kerawang', primary),
                   _infoRow(Icons.group, "$_attendeeCount people going", primary),
+                  
+                  const SizedBox(height: 20),
+                  
+                  // ORGANIZER CARD (Consistency Update 2)
+                  if (_organizerProfile != null)
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade200), borderRadius: BorderRadius.circular(12), color: Colors.white),
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            backgroundImage: NetworkImage(_organizerProfile!['avatar_url'] ?? ''),
+                            onBackgroundImageError: (_,__) {},
+                            child: _organizerProfile!['avatar_url'] == null ? const Icon(Icons.person) : null,
+                          ),
+                          const SizedBox(width: 12),
+                          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(_organizerProfile!['full_name'] ?? 'Organizer', style: const TextStyle(fontWeight: FontWeight.bold)),
+                            Text("Event Host", style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                          ]),
+                        ],
+                      ),
+                    ),
+
                   const Divider(height: 40),
                   const Text("About", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
@@ -188,9 +279,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                          MaterialPageRoute(builder: (_) => CreateEventScreen(eventToEdit: _eventData))
                        );
                        if (result == true && mounted) {
-                          setState(() => _isLoading = true);
-                          final newData = await Supabase.instance.client.from('events').select().eq('id', _eventData!['id']).single();
-                          setState(() { _eventData = newData; _isLoading = false; });
+                          _loadEventData(); // Refresh everything
                        }
                     },
                     style: ElevatedButton.styleFrom(backgroundColor: primary, foregroundColor: Colors.white),

@@ -184,7 +184,17 @@ class _HomeScreenState extends State<HomeScreen> {
                               Expanded(
                                 child: ClipRRect(
                                   borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                                  child: Image.network(event['image_url'] ?? '', fit: BoxFit.cover, width: double.infinity),
+                                  child: Image.network(
+                                    event['image_url'] ?? '',
+                                    fit: BoxFit.cover,
+                                    width: double.infinity,
+                                    errorBuilder: (context, error, stackTrace) {
+                                      return Container(
+                                        color: Colors.grey[200],
+                                        child: const Icon(Icons.image_not_supported, color: Colors.grey),
+                                      );
+                                    },
+                                  ),
                                 ),
                               ),
                               Padding(
@@ -231,7 +241,17 @@ class _HomeScreenState extends State<HomeScreen> {
                               Expanded(
                                 child: ClipRRect(
                                   borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                                  child: Image.network(item['image_url'] ?? '', fit: BoxFit.cover, width: double.infinity),
+                                  child: Image.network(
+                                    item['image_url'] ?? '',
+                                    fit: BoxFit.cover,
+                                    width: double.infinity,
+                                    errorBuilder: (context, error, stackTrace) {
+                                      return Container(
+                                        color: Colors.grey[200],
+                                        child: const Icon(Icons.image_not_supported, color: Colors.grey),
+                                      );
+                                    },
+                                  ),
                                 ),
                               ),
                               Padding(

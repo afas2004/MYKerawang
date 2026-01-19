@@ -2,14 +2,61 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'create_listing_screen.dart'; // Import CreateListingScreen
+import 'create_listing_screen.dart';
 
-class ItemDetailScreen extends StatelessWidget {
+class ItemDetailScreen extends StatefulWidget {
   final Map<String, dynamic> item;
+  // We allow passing an ID optionally if we just want to load by ID later
   const ItemDetailScreen({super.key, required this.item});
 
-  // DELETE FUNCTION
-  Future<void> _deleteItem(BuildContext context) async {
+  @override
+  State<ItemDetailScreen> createState() => _ItemDetailScreenState();
+}
+
+class _ItemDetailScreenState extends State<ItemDetailScreen> {
+  late Map<String, dynamic> _itemData;
+  bool _isLoading = false;
+  Map<String, dynamic>? _sellerProfile;
+
+  @override
+  void initState() {
+    super.initState();
+    // Start with the data passed in
+    _itemData = widget.item;
+    // Then fetch fresh data (including seller profile)
+    _refreshData();
+  }
+
+  Future<void> _refreshData() async {
+    try {
+      final supabase = Supabase.instance.client;
+      
+      // 1. Fetch fresh item details
+      final freshItem = await supabase
+          .from('listings')
+          .select()
+          .eq('id', _itemData['id'])
+          .single();
+
+      // 2. Fetch Seller Profile
+      final seller = await supabase
+          .from('profiles')
+          .select()
+          .eq('id', freshItem['seller_id'])
+          .maybeSingle();
+
+      if (mounted) {
+        setState(() {
+          _itemData = freshItem;
+          _sellerProfile = seller;
+        });
+      }
+    } catch (e) {
+      debugPrint("Error refreshing item: $e");
+    }
+  }
+
+  Future<void> _deleteItem() async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -17,26 +64,30 @@ class ItemDetailScreen extends StatelessWidget {
         content: const Text("Are you sure you want to delete this listing?"),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Delete", style: TextStyle(color: Colors.red))),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text("Delete", style: TextStyle(color: Colors.red))),
         ],
       ),
     );
 
     if (confirm == true) {
-      await Supabase.instance.client.from('listings').delete().eq('id', item['id']);
-      if (context.mounted) {
-         // Return true to the Profile Screen so it refreshes
-         Navigator.pop(context, true); 
-         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Listing deleted")));
+      try {
+        await Supabase.instance.client.from('listings').delete().eq('id', _itemData['id']);
+        if (mounted) {
+          Navigator.pop(context, true); // Return true to refresh previous screen
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Listing deleted")));
+        }
+      } catch (e) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final sellerId = item['seller_id'];
     final currentUser = Supabase.instance.client.auth.currentUser;
-    final isOwner = currentUser != null && currentUser.id == sellerId;
+    final isOwner = currentUser != null && currentUser.id == _itemData['seller_id'];
 
     return Scaffold(
       body: CustomScrollView(
@@ -50,10 +101,16 @@ class ItemDetailScreen extends StatelessWidget {
                   Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(
                     backgroundColor: Colors.black,
                     appBar: AppBar(backgroundColor: Colors.transparent, iconTheme: const IconThemeData(color: Colors.white)),
-                    body: PhotoView(imageProvider: NetworkImage(item['image_url'])),
+                    body: PhotoView(imageProvider: NetworkImage(_itemData['image_url'] ?? '')),
                   )));
                 },
-                child: Image.network(item['image_url'], fit: BoxFit.cover),
+                child: Image.network(
+                  _itemData['image_url'] ?? '', 
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Container(color: Colors.grey[200], child: const Center(child: Icon(Icons.broken_image, size: 50, color: Colors.grey)));
+                  },
+                ),
               ),
             ),
           ),
@@ -66,40 +123,39 @@ class ItemDetailScreen extends StatelessWidget {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Chip(label: Text(item['category'] ?? 'General'), backgroundColor: Colors.orange[50], side: BorderSide.none),
-                      Text("RM ${(item['price'] as num).toStringAsFixed(2)}", style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.orange)),
+                      Chip(label: Text(_itemData['category'] ?? 'General'), backgroundColor: Colors.orange[50], side: BorderSide.none),
+                      Text("RM ${(_itemData['price'] as num).toStringAsFixed(2)}", style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.orange)),
                     ],
                   ),
                   const SizedBox(height: 10),
-                  Text(item['title'], style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                  Text(_itemData['title'], style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 20),
                   
-                  // User Card
-                  FutureBuilder(
-                    future: Supabase.instance.client.from('profiles').select().eq('id', sellerId).single(),
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData) return const SizedBox();
-                      final user = snapshot.data as Map;
-                      return Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade200), borderRadius: BorderRadius.circular(12), color: Colors.white),
-                        child: Row(
-                          children: [
-                            CircleAvatar(backgroundImage: NetworkImage(user['avatar_url'] ?? '')),
-                            const SizedBox(width: 12),
-                            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                              Text(user['full_name'], style: const TextStyle(fontWeight: FontWeight.bold)),
-                              Text(user['role'] == 'club' ? 'Club Organizer' : 'Student', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
-                            ]),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
+                  // Seller Card (Now uses loaded state)
+                  if (_sellerProfile != null)
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade200), borderRadius: BorderRadius.circular(12), color: Colors.white),
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            backgroundImage: NetworkImage(_sellerProfile!['avatar_url'] ?? ''),
+                            onBackgroundImageError: (_,__) {},
+                            child: _sellerProfile!['avatar_url'] == null ? const Icon(Icons.person) : null,
+                          ),
+                          const SizedBox(width: 12),
+                          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(_sellerProfile!['full_name'] ?? 'Student', style: const TextStyle(fontWeight: FontWeight.bold)),
+                            Text(_sellerProfile!['role'] == 'club' ? 'Club Organizer' : 'Student', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                          ]),
+                        ],
+                      ),
+                    ),
+                    
                   const SizedBox(height: 20),
                   const Text("Description", style: TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
-                  Text(item['description'] ?? ''),
+                  Text(_itemData['description'] ?? 'No description provided.'),
                   const SizedBox(height: 80),
                 ],
               ),
@@ -107,18 +163,16 @@ class ItemDetailScreen extends StatelessWidget {
           )
         ],
       ),
-      
-      // BOTTOM SHEET LOGIC
       bottomSheet: Container(
         padding: const EdgeInsets.all(16),
         width: double.infinity,
-        color: Colors.white,
+        decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 5, offset: const Offset(0, -2))]),
         child: isOwner
             ? Row(
                 children: [
                   Expanded(
                     child: OutlinedButton(
-                      onPressed: () => _deleteItem(context),
+                      onPressed: _deleteItem,
                       style: OutlinedButton.styleFrom(foregroundColor: Colors.red, side: const BorderSide(color: Colors.red)),
                       child: const Text("Delete"),
                     ),
@@ -127,16 +181,14 @@ class ItemDetailScreen extends StatelessWidget {
                   Expanded(
                     child: ElevatedButton(
                       onPressed: () async {
-                        // Navigate to CreateListingScreen in EDIT mode
+                        // Navigate to Edit
                         final result = await Navigator.push(
                           context, 
-                          MaterialPageRoute(
-                            builder: (_) => CreateListingScreen(itemToEdit: item)
-                          )
+                          MaterialPageRoute(builder: (_) => CreateListingScreen(itemToEdit: _itemData))
                         );
-                        // If updated (result == true), pop back to profile to refresh list
-                        if (result == true && context.mounted) {
-                           Navigator.pop(context, true);
+                        // If we saved changes, refresh this screen
+                        if (result == true) {
+                           _refreshData();
                         }
                       },
                       style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
@@ -147,7 +199,7 @@ class ItemDetailScreen extends StatelessWidget {
               )
             : ElevatedButton.icon(
                 onPressed: () async {
-                  final url = Uri.parse("https://wa.me/?text=Hi, I am interested in ${item['title']}");
+                  final url = Uri.parse("https://wa.me/?text=Hi, I am interested in ${_itemData['title']}");
                   if (await canLaunchUrl(url)) launchUrl(url);
                 },
                 icon: const Icon(Icons.message),
