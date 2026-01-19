@@ -39,6 +39,7 @@ dependencies:
   image_picker: ^1.2.1 # For Multimedia uploads
   url_launcher: ^6.1.14 # For WhatsApp redirect
   flutter_local_notifications: ^17.0.0 # For the notification proposal
+  permission_handler: ^11.1.0
   photo_view: ^0.14.0
   share_plus: ^7.2.1
 

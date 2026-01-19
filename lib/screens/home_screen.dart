@@ -21,20 +21,31 @@ class HomeScreen extends StatelessWidget {
                 padding: const EdgeInsets.all(16.0),
                 child: Row(
                   children: [
-                    CircleAvatar(
-                      radius: 24,
-                      backgroundColor: Colors.grey[200],
-                      // 1. Try to load image
-                      backgroundImage: const NetworkImage('https://i.pravatar.cc/150?img=5'), 
-                      // 2. If it fails, this function catches the crash
-                      onBackgroundImageError: (exception, stackTrace) {
-                        debugPrint("Avatar load failed");
+                    FutureBuilder(
+                      future: _fetchUserProfile(supabase),
+                      builder: (context, snapshot) {
+                        final profileData = snapshot.data as Map<String, dynamic>?;
+                        final avatarUrl = profileData?['avatar_url'] as String? ?? 'https://via.placeholder.com/150';
+                        final fullName = profileData?['full_name'] as String? ?? 'User';
+                        return CircleAvatar(
+                          radius: 24,
+                          backgroundColor: Colors.grey[200],
+                          backgroundImage: NetworkImage(avatarUrl),
+                          onBackgroundImageError: (exception, stackTrace) {
+                            debugPrint("Avatar load failed");
+                          },
+                          child: const Icon(Icons.person, color: Colors.grey),
+                        );
                       },
-                      // 3. Show an icon on top if the image fails (Background becomes visible)
-                      child: const Icon(Icons.person, color: Colors.grey),
                     ),
                     const SizedBox(width: 12),
-                    const Text('Welcome, Aina!', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    FutureBuilder(
+                      future: _fetchUserProfile(supabase),
+                      builder: (context, snapshot) {
+                        final fullName = (snapshot.data as Map<String, dynamic>?)?['full_name'] as String? ?? 'User';
+                        return Text('Welcome, $fullName!', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold));
+                      },
+                    ),
                     const Spacer(),
                     Stack(
                       children: [
@@ -195,5 +206,23 @@ class HomeScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  static Future<Map<String, dynamic>?> _fetchUserProfile(SupabaseClient supabase) async {
+    try {
+      final user = supabase.auth.currentUser;
+      if (user == null) return null;
+      
+      final profileData = await supabase
+          .from('profiles')
+          .select()
+          .eq('id', user.id)
+          .single();
+      
+      return profileData;
+    } catch (e) {
+      debugPrint("Error fetching profile: $e");
+      return null;
+    }
   }
 }

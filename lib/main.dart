@@ -1,28 +1,34 @@
 import 'package:flutter/material.dart';
+import 'package:mykerawang/screens/home_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'database_helper.dart';
+
+// --- IMPORT YOUR NEW SERVICE ---
+import 'services/notification_service.dart';
+
 import 'screens/marketplace_screen.dart';
 import 'screens/events_screen.dart';
-import 'screens/profile_screen.dart'; // <--- THIS SHOULD WORK NOW
+import 'screens/profile_screen.dart'; 
 import 'screens/item_detail_screen.dart';
 import 'screens/event_detail_screen.dart';
 import 'screens/login_screen.dart';
-
-// --- THE FIX IS HERE: We hide the ghost class so main.dart doesn't get confused ---
-import 'screens/profile_screen.dart' hide EventDetailScreen; 
-
-import 'screens/item_detail_screen.dart';
-import 'screens/event_detail_screen.dart';
-import 'screens/login_screen.dart';
+import 'screens/notifications_screen.dart'; // Import if you have it
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 1. Initialize Supabase
   await Supabase.initialize(
+    // REPLACE WITH YOUR URL AND KEY IF THEY ARE DIFFERENT
     url: 'https://zxjuqpqzyzmegdjttzyz.supabase.co',
     anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp4anVxcHF6eXptZWdkanR0enl6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0MzAxNzIsImV4cCI6MjA4MDAwNjE3Mn0.UD_aL16G55CFD6TAOutU4oiGsJCaU5wq-wqFf6OnW5c',
   );
+
+  // 2. Initialize the Notification System (NEW)
+  await NotificationService.init();
+
   runApp(const MyApp());
 }
 
@@ -33,21 +39,78 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      title: 'MYKerawang',
       theme: ThemeData(
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFFAFAFA),
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF5B3E96)), 
         textTheme: GoogleFonts.poppinsTextTheme(),
       ),
+      // We start at AuthGate to decide where to go
       home: const AuthGate(),
     );
   }
 }
 
-class AuthGate extends StatelessWidget {
+// --- UPDATED AUTH GATE ---
+// This widget watches for Login/Logout AND listens for new Notifications
+class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
+
+  @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  @override
+  void initState() {
+    super.initState();
+    _setupNotificationListener();
+  }
+
+  // THE MAGIC LISTENER
+  void _setupNotificationListener() {
+    Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      final event = data.event;
+      final session = data.session;
+
+      // When User Logs In...
+      if (event == AuthChangeEvent.signedIn && session != null) {
+        
+        // 1. Ask for Android Permission immediately
+        NotificationService.requestPermission();
+
+        // 2. Watch the 'notifications' table for new rows
+        Supabase.instance.client
+            .from('notifications')
+            .stream(primaryKey: ['id'])
+            .eq('user_id', session.user.id)
+            .listen((List<Map<String, dynamic>> data) {
+              
+              if (data.isNotEmpty) {
+                // Get the newest notification
+                final latest = data.last; 
+                
+                // Only show popup if it was created < 10 seconds ago
+                // (This prevents 50 popups from appearing when you first open the app)
+                final created = DateTime.parse(latest['created_at']);
+                final now = DateTime.now();
+                
+                if (now.difference(created).inSeconds < 10) {
+                   NotificationService.showNotification(
+                     latest['title'], 
+                     latest['message']
+                   );
+                }
+              }
+            });
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Standard Session Check
     final session = Supabase.instance.client.auth.currentSession;
     return session == null ? const LoginScreen() : const MainScaffold();
   }
@@ -63,9 +126,9 @@ class _MainScaffoldState extends State<MainScaffold> {
   int _index = 0;
   final _pages = [
     const HomeScreen(),
-    const MarketplaceScreen(),
-    const EventsScreen(),
-    const ProfileScreen(),
+    const MarketplaceScreen(), 
+    const EventsScreen(),     
+    const ProfileScreen(),    
   ];
 
   @override
@@ -86,204 +149,6 @@ class _MainScaffoldState extends State<MainScaffold> {
   }
 }
 
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
-  @override
-  State<HomeScreen> createState() => _HomeScreenState();
-}
-
-class _HomeScreenState extends State<HomeScreen> {
-  List<Map<String, dynamic>> _events = [];
-  List<Map<String, dynamic>> _listings = [];
-  bool _isLoading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadData();
-  }
-
-  Future<void> _loadData() async {
-    final cachedEvents = await DatabaseHelper.instance.getCachedEvents();
-    final cachedListings = await DatabaseHelper.instance.getCachedListings();
-    
-    if (mounted && (cachedEvents.isNotEmpty || cachedListings.isNotEmpty)) {
-      setState(() {
-        _events = cachedEvents;
-        _listings = cachedListings;
-        _isLoading = false;
-      });
-    }
-
-    try {
-      final freshEvents = await Supabase.instance.client
-          .from('events')
-          .select()
-          .order('start_datetime')
-          .limit(5);
-      
-      final freshListings = await Supabase.instance.client
-          .from('listings')
-          .select()
-          .order('created_at', ascending: false)
-          .limit(5);
-
-      await DatabaseHelper.instance.cacheEvents(List<Map<String, dynamic>>.from(freshEvents));
-      await DatabaseHelper.instance.cacheListings(List<Map<String, dynamic>>.from(freshListings));
-
-      if (mounted) {
-        setState(() {
-          _events = List<Map<String, dynamic>>.from(freshEvents);
-          _listings = List<Map<String, dynamic>>.from(freshListings);
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      debugPrint("Offline mode or error: $e");
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("MYKerawang", style: TextStyle(fontWeight: FontWeight.bold)),
-        centerTitle: false,
-      ),
-      body: _isLoading 
-        ? const Center(child: CircularProgressIndicator()) 
-        : SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _sectionHeader("Happening Soon", () {}),
-                const SizedBox(height: 12),
-                SizedBox(
-                  height: 220,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: _events.length,
-                    separatorBuilder: (_,__) => const SizedBox(width: 12),
-                    itemBuilder: (context, index) {
-                      final event = _events[index];
-                      final date = DateTime.parse(event['start_datetime']);
-                      return GestureDetector(
-                        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => EventDetailScreen(eventId: event['id']))),
-                        child: Container(
-                          width: 280,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(16),
-                            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)],
-                            border: Border.all(color: Colors.purple.withOpacity(0.1))
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: ClipRRect(
-                                  borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                                  child: Image.network(
-                                    event['image_url'] ?? '',
-                                    fit: BoxFit.cover,
-                                    width: double.infinity,
-                                    errorBuilder: (context, error, stackTrace) {
-                                      return Container(
-                                        color: Colors.grey[200],
-                                        child: const Icon(Icons.image_not_supported, color: Colors.grey),
-                                      );
-                                    },
-                                  ),
-                                ),
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.all(12),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(DateFormat('dd MMM, hh:mm a').format(date), 
-                                      style: TextStyle(color: Theme.of(context).primaryColor, fontWeight: FontWeight.bold, fontSize: 12)),
-                                    Text(event['title'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16), maxLines: 1),
-                                  ],
-                                ),
-                              )
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 24),
-                _sectionHeader("New in Marketplace", () {}),
-                const SizedBox(height: 12),
-                SizedBox(
-                  height: 200,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: _listings.length,
-                    separatorBuilder: (_,__) => const SizedBox(width: 12),
-                    itemBuilder: (context, index) {
-                      final item = _listings[index];
-                      return GestureDetector(
-                        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ItemDetailScreen(item: item))),
-                        child: Container(
-                          width: 160,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.orange.withOpacity(0.2)), 
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: ClipRRect(
-                                  borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                                  child: Image.network(
-                                    item['image_url'] ?? '',
-                                    fit: BoxFit.cover,
-                                    width: double.infinity,
-                                    errorBuilder: (context, error, stackTrace) {
-                                      return Container(
-                                        color: Colors.grey[200],
-                                        child: const Icon(Icons.image_not_supported, color: Colors.grey),
-                                      );
-                                    },
-                                  ),
-                                ),
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.all(8),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(item['title'], maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
-                                    Text("RM ${(item['price'] as num).toStringAsFixed(2)}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.orange)),
-                                  ],
-                                ),
-                              )
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                )
-              ],
-            ),
-          ),
-    );
-  }
-
-  Widget _sectionHeader(String title, VoidCallback onSeeAll) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-        TextButton(onPressed: onSeeAll, child: const Text("See All")),
-      ],
-    );
-  }
-}
+// ... Rest of your HomeScreen code (copy it back if it got deleted, or ask me to paste it) ...
+// Since HomeScreen is usually large, make sure you keep the code you had for it!
+// If you need the HomeScreen code again, let me know.
