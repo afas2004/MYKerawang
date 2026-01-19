@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import 'package:cached_network_image/cached_network_image.dart';
 import 'notifications_screen.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -25,16 +25,31 @@ class HomeScreen extends StatelessWidget {
                       future: _fetchUserProfile(supabase),
                       builder: (context, snapshot) {
                         final profileData = snapshot.data as Map<String, dynamic>?;
-                        final avatarUrl = profileData?['avatar_url'] as String? ?? 'https://via.placeholder.com/150';
-                        final fullName = profileData?['full_name'] as String? ?? 'User';
-                        return CircleAvatar(
-                          radius: 24,
-                          backgroundColor: Colors.grey[200],
-                          backgroundImage: NetworkImage(avatarUrl),
-                          onBackgroundImageError: (exception, stackTrace) {
-                            debugPrint("Avatar load failed");
-                          },
-                          child: const Icon(Icons.person, color: Colors.grey),
+                        final avatarUrl = profileData?['avatar_url'] as String?;
+
+                        return Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.grey[200],
+                          ),
+                          child: ClipOval(
+                            child: avatarUrl != null
+                                ? CachedNetworkImage(
+                                    imageUrl: avatarUrl,
+                                    fit: BoxFit.cover,
+                                    // Show spinner while loading
+                                    placeholder: (context, url) => const Padding(
+                                      padding: EdgeInsets.all(12.0),
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    ),
+                                    // Show Person Icon if URL fails (Safe Fallback)
+                                    errorWidget: (context, url, error) => const Icon(Icons.person, color: Colors.grey),
+                                  )
+                                // Show Person Icon if URL is null
+                                : const Icon(Icons.person, color: Colors.grey),
+                          ),
                         );
                       },
                     ),
@@ -110,10 +125,17 @@ class HomeScreen extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Expanded(
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                                    image: DecorationImage(image: NetworkImage(event['image_url'] ?? 'https://via.placeholder.com/300'), fit: BoxFit.cover),
+                                child: CachedNetworkImage(
+                                  imageUrl: event['image_url'] ?? '',
+                                  fit: BoxFit.cover,
+                                  width: double.infinity,
+                                  placeholder: (context, url) => Container(
+                                    color: Colors.grey[200], 
+                                    child: const Center(child: CircularProgressIndicator())
+                                  ),
+                                  errorWidget: (context, url, error) => Container(
+                                    color: Colors.grey[200], 
+                                    child: const Icon(Icons.broken_image, color: Colors.grey)
                                   ),
                                 ),
                               ),
@@ -177,11 +199,12 @@ class HomeScreen extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Expanded(
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                                  image: DecorationImage(image: NetworkImage(item['image_url'] ?? 'https://via.placeholder.com/150'), fit: BoxFit.cover),
-                                ),
+                              child: CachedNetworkImage(
+                                imageUrl: item['image_url'] ?? '',
+                                fit: BoxFit.cover,
+                                width: double.infinity,
+                                placeholder: (context, url) => Container(color: Colors.grey[200]),
+                                errorWidget: (context, url, error) => const Icon(Icons.store, color: Colors.grey),
                               ),
                             ),
                             Padding(

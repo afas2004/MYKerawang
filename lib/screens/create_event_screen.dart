@@ -53,7 +53,7 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
     final initial = _selectedDate ?? now;
     final picked = await showDatePicker(
       context: context, 
-      firstDate: now.subtract(const Duration(days: 365)), // Allow past dates if editing old event
+      firstDate: now, // Allow past dates if editing old event
       lastDate: now.add(const Duration(days: 365)),
       initialDate: initial,
     );

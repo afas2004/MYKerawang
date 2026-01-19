@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'login_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -111,6 +112,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onChanged: (v) {
                   setState(() => _eventReminders = v);
                   _updateSetting('notify_reminders', v); // Save to DB
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.settings_applications, color: Colors.orange),
+                title: const Text("Fix Notification Permissions"),
+                subtitle: const Text("Open system settings to enable"),
+                onTap: () async {
+                  // This forces the phone's App Settings page to open
+                  await openAppSettings(); 
                 },
               ),
               

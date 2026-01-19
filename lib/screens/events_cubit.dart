@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../database_helper.dart'; // Import your DB Helper
 
-// 1. The State (The Data Snapshot)
 class EventsState {
-  final List<Map<String, dynamic>> allEvents;       // Raw data
-  final List<Map<String, dynamic>> displayedEvents; // Filtered data
+  final List<Map<String, dynamic>> allEvents;
+  final List<Map<String, dynamic>> displayedEvents;
   final String selectedTag;
   final String searchQuery;
   final bool isLoading;
@@ -39,57 +39,71 @@ class EventsState {
   }
 }
 
-// 2. The Cubit (The Logic Engine)
 class EventsCubit extends Cubit<EventsState> {
   EventsCubit() : super(EventsState()) {
-    _subscribeToRealtime();
+    _loadData();
   }
 
   StreamSubscription? _subscription;
   final _supabase = Supabase.instance.client;
 
-  void _subscribeToRealtime() {
+  Future<void> _loadData() async {
+    // 1. Show loading initially
     emit(state.copyWith(isLoading: true));
 
+    // 2. FAST: Load from SQLite immediately
+    final cachedData = await DatabaseHelper.instance.getCachedEvents();
+    
+    if (cachedData.isNotEmpty) {
+      final filtered = _applyFilters(cachedData, state.selectedTag, state.searchQuery);
+      emit(state.copyWith(
+        allEvents: cachedData,
+        displayedEvents: filtered,
+        isLoading: false, // UI appears instantly
+      ));
+    }
+
+    // 3. SLOW: Subscribe to Supabase (Background Download)
     _subscription = _supabase
         .from('events')
         .stream(primaryKey: ['id'])
         .order('start_datetime')
-        .listen((data) {
+        .listen((data) async {
           final items = List<Map<String, dynamic>>.from(data);
           
-          // Apply filters immediately upon receiving new data
-          final filtered = _applyFilters(items, state.selectedTag, state.searchQuery);
+          // 4. Update SQLite so next time is fast too
+          await DatabaseHelper.instance.cacheEvents(items);
 
-          emit(state.copyWith(
-            allEvents: items,
-            displayedEvents: filtered,
-            isLoading: false,
-          ));
+          // 5. Update UI with fresh data
+          final filtered = _applyFilters(items, state.selectedTag, state.searchQuery);
+          
+          if (!isClosed) {
+            emit(state.copyWith(
+              allEvents: items,
+              displayedEvents: filtered,
+              isLoading: false,
+            ));
+          }
         }, onError: (error) {
-          emit(state.copyWith(isLoading: false, errorMessage: error.toString()));
+          if (!isClosed) emit(state.copyWith(errorMessage: error.toString()));
         });
   }
 
-  // Update Tag Filter
   void updateTag(String tag) {
     final filtered = _applyFilters(state.allEvents, tag, state.searchQuery);
     emit(state.copyWith(selectedTag: tag, displayedEvents: filtered));
   }
 
-  // Update Search Query
   void updateSearch(String query) {
     final filtered = _applyFilters(state.allEvents, state.selectedTag, query);
     emit(state.copyWith(searchQuery: query, displayedEvents: filtered));
   }
 
-  // The Filter Logic (Extracted from your original code)
   List<Map<String, dynamic>> _applyFilters(
       List<Map<String, dynamic>> items, String tag, String query) {
     return items.where((e) {
       final title = (e['title'] as String).toLowerCase();
       final search = query.toLowerCase();
-      // Safe parsing of tags from DB
       final eventTags = List<String>.from(e['tags'] ?? []);
       
       final matchesSearch = title.contains(search);

@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../database_helper.dart'; // Import DB Helper
 
-// 1. Define State
 class MarketplaceState {
-  final List<Map<String, dynamic>> allItems;      // Raw data from DB
-  final List<Map<String, dynamic>> displayedItems; // Data shown after filter/search
+  final List<Map<String, dynamic>> allItems;
+  final List<Map<String, dynamic>> displayedItems;
   final String selectedFilter;
   final String searchQuery;
   final bool isLoading;
@@ -39,53 +39,64 @@ class MarketplaceState {
   }
 }
 
-// 2. Define Cubit (Logic)
 class MarketplaceCubit extends Cubit<MarketplaceState> {
   MarketplaceCubit() : super(MarketplaceState()) {
-    _subscribeToRealtime();
+    _loadData();
   }
 
   StreamSubscription? _subscription;
   final _supabase = Supabase.instance.client;
 
-  // Replaces StreamBuilder logic
-  void _subscribeToRealtime() {
+  Future<void> _loadData() async {
     emit(state.copyWith(isLoading: true));
 
+    // 1. FAST: Cache Load
+    final cachedData = await DatabaseHelper.instance.getCachedListings();
+    
+    if (cachedData.isNotEmpty) {
+      final filtered = _applyFilters(cachedData, state.selectedFilter, state.searchQuery);
+      emit(state.copyWith(
+        allItems: cachedData,
+        displayedItems: filtered,
+        isLoading: false,
+      ));
+    }
+
+    // 2. SLOW: Network Load
     _subscription = _supabase
         .from('listings')
         .stream(primaryKey: ['id'])
         .order('created_at')
-        .listen((data) {
-          // Convert raw data
+        .listen((data) async {
           final items = List<Map<String, dynamic>>.from(data);
           
-          // Apply current filters immediately to new data
+          // Update Cache
+          await DatabaseHelper.instance.cacheListings(items);
+
           final filtered = _applyFilters(items, state.selectedFilter, state.searchQuery);
 
-          emit(state.copyWith(
-            allItems: items,
-            displayedItems: filtered,
-            isLoading: false,
-          ));
+          if (!isClosed) {
+            emit(state.copyWith(
+              allItems: items,
+              displayedItems: filtered,
+              isLoading: false,
+            ));
+          }
         }, onError: (error) {
-          emit(state.copyWith(isLoading: false, errorMessage: error.toString()));
+          if (!isClosed) emit(state.copyWith(isLoading: false, errorMessage: error.toString()));
         });
   }
 
-  // Update Filter (Chips)
   void updateFilter(String filter) {
     final filtered = _applyFilters(state.allItems, filter, state.searchQuery);
     emit(state.copyWith(selectedFilter: filter, displayedItems: filtered));
   }
 
-  // Update Search (TextField)
   void updateSearch(String query) {
     final filtered = _applyFilters(state.allItems, state.selectedFilter, query);
     emit(state.copyWith(searchQuery: query, displayedItems: filtered));
   }
 
-  // The Helper Logic (Extracted from your original build method)
   List<Map<String, dynamic>> _applyFilters(
       List<Map<String, dynamic>> items, String filter, String query) {
     return items.where((i) {

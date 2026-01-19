@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:photo_view/photo_view.dart';
@@ -104,12 +105,11 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                     body: PhotoView(imageProvider: NetworkImage(_itemData['image_url'] ?? '')),
                   )));
                 },
-                child: Image.network(
-                  _itemData['image_url'] ?? '', 
+                child: CachedNetworkImage(
+                  imageUrl: _itemData['image_url'] ?? '',
                   fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) {
-                    return Container(color: Colors.grey[200], child: const Center(child: Icon(Icons.broken_image, size: 50, color: Colors.grey)));
-                  },
+                  placeholder: (context, url) => const Center(child: CircularProgressIndicator()),
+                  errorWidget: (context, url, error) => const Icon(Icons.broken_image),
                 ),
               ),
             ),
@@ -139,7 +139,9 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                       child: Row(
                         children: [
                           CircleAvatar(
-                            backgroundImage: NetworkImage(_sellerProfile!['avatar_url'] ?? ''),
+                            backgroundImage: _sellerProfile!['avatar_url'] != null
+                            ? CachedNetworkImageProvider(_sellerProfile!['avatar_url'])
+                            : null,
                             onBackgroundImageError: (_,__) {},
                             child: _sellerProfile!['avatar_url'] == null ? const Icon(Icons.person) : null,
                           ),

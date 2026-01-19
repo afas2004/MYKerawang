@@ -155,18 +155,19 @@ class _EventsViewState extends State<EventsView> {
                                             children: [
                                               // Tags Row
                                               Row(
-                                                children: (event['tags'] as List)
-                                                    .take(3)
-                                                    .map<Widget>((t) => Padding(
-                                                          padding: const EdgeInsets.only(right: 8),
-                                                          child: Text(
-                                                              "#$t",
-                                                              style: TextStyle(
-                                                                  color: Colors.purple[700],
-                                                                  fontSize: 12,
-                                                                  fontWeight: FontWeight.bold)),
-                                                        ))
-                                                    .toList(),
+                                                children: ((event['tags'] as List?) ?? [])
+                                                .take(3)
+                                                .map<Widget>((t) => Padding(
+                                                  padding: const EdgeInsets.only(right: 8),
+                                                  child: Text(
+                                                    "#$t",
+                                                    style: TextStyle(
+                                                      color: Colors.purple[700],
+                                                      fontSize: 12,
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                )).toList(),
                                               ),
                                               const SizedBox(height: 8),
                                               // Title
