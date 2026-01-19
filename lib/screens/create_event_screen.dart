@@ -2,46 +2,69 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
-import 'package:intl/intl.dart';
-import 'image_preview_screen.dart';
+// Ensure this exists
 
 class CreateEventScreen extends StatefulWidget {
-  const CreateEventScreen({super.key});
+  final Map<String, dynamic>? eventToEdit; // NEW: Event to edit
+
+  const CreateEventScreen({super.key, this.eventToEdit});
 
   @override
   State<CreateEventScreen> createState() => _CreateEventScreenState();
 }
 
 class _CreateEventScreenState extends State<CreateEventScreen> {
-  final _titleController = TextEditingController();
-  final _locationController = TextEditingController();
-  final _descController = TextEditingController();
+  late TextEditingController _titleController;
+  late TextEditingController _locationController;
+  late TextEditingController _descController;
   DateTime? _selectedDate;
   File? _imageFile;
+  String? _existingImageUrl;
   bool _isLoading = false;
   bool _isPublic = true;
   
-  // Tag Selection Logic
   final List<String> _availableTags = ['Academic', 'Tech', 'Food', 'Fun', 'Sports', 'Workshop', 'Arts'];
-  final List<String> _selectedTags = [];
+  List<String> _selectedTags = [];
 
   final primaryColor = const Color(0xFF00A7C7);
   final bgColor = const Color(0xFFF8F9FA);
 
+  @override
+  void initState() {
+    super.initState();
+    final event = widget.eventToEdit;
+    
+    _titleController = TextEditingController(text: event?['title'] ?? '');
+    _locationController = TextEditingController(text: event?['location'] ?? '');
+    _descController = TextEditingController(text: event?['description'] ?? '');
+    
+    if (event != null) {
+      _selectedDate = DateTime.parse(event['start_datetime']);
+      _existingImageUrl = event['image_url'];
+      _isPublic = event['is_public'] ?? true;
+      if (event['tags'] != null) {
+        _selectedTags = List<String>.from(event['tags']);
+      }
+    }
+  }
+
   Future<void> _pickDate() async {
     final now = DateTime.now();
+    final initial = _selectedDate ?? now;
     final picked = await showDatePicker(
       context: context, 
-      firstDate: now, 
+      firstDate: now.subtract(const Duration(days: 365)), // Allow past dates if editing old event
       lastDate: now.add(const Duration(days: 365)),
-      initialDate: now,
+      initialDate: initial,
     );
     if (picked != null) {
-      final time = await showTimePicker(context: context, initialTime: TimeOfDay.now());
-      if (time != null) {
-        setState(() {
-          _selectedDate = DateTime(picked.year, picked.month, picked.day, time.hour, time.minute);
-        });
+      if (mounted) {
+        final time = await showTimePicker(context: context, initialTime: TimeOfDay.fromDateTime(initial));
+        if (time != null) {
+          setState(() {
+            _selectedDate = DateTime(picked.year, picked.month, picked.day, time.hour, time.minute);
+          });
+        }
       }
     }
   }
@@ -96,7 +119,7 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
 
     try {
       final supabase = Supabase.instance.client;
-      String? imageUrl;
+      String? imageUrl = _existingImageUrl;
       
       if (_imageFile != null) {
         final fileExt = _imageFile!.path.split('.').last;
@@ -106,20 +129,29 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
         imageUrl = supabase.storage.from('images').getPublicUrl(path);
       }
 
-      await supabase.from('events').insert({
+      final data = {
         'title': _titleController.text,
         'location': _locationController.text,
         'description': _descController.text,
         'start_datetime': _selectedDate!.toIso8601String(),
         'image_url': imageUrl,
         'is_public': _isPublic,
-        'tags': _selectedTags, // Array for DB
+        'tags': _selectedTags,
         'organizer_id': user.id,
-      });
+      };
+
+      if (widget.eventToEdit != null) {
+        // UPDATE
+        await supabase.from('events').update(data).eq('id', widget.eventToEdit!['id']);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Event Updated!')));
+      } else {
+        // INSERT
+        await supabase.from('events').insert(data);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Event Published!')));
+      }
 
       if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Event Published!')));
+        Navigator.pop(context, true); // Return true to refresh
       }
     } catch (e) {
       if (mounted) {
@@ -132,10 +164,12 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isEditing = widget.eventToEdit != null;
+
     return Scaffold(
       backgroundColor: bgColor,
       appBar: AppBar(
-        title: const Text('Create New Event'),
+        title: Text(isEditing ? 'Edit Event' : 'Create New Event'),
         backgroundColor: bgColor,
         elevation: 0,
         bottom: PreferredSize(preferredSize: const Size.fromHeight(1), child: Divider(height: 1, color: Colors.grey[200])),
@@ -196,10 +230,10 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
             _label("Event Media"),
             GestureDetector(
               onTap: () {
-                if (_imageFile == null) {
+                if (_imageFile == null && _existingImageUrl == null) {
                   _showImageOptions();
                 } else {
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => ImagePreviewScreen(imageFile: _imageFile)));
+                   _showImageOptions();
                 }
               },
               child: Container(
@@ -209,9 +243,13 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: Colors.grey.shade300, style: BorderStyle.solid),
-                  image: _imageFile != null ? DecorationImage(image: FileImage(_imageFile!), fit: BoxFit.cover) : null,
+                  image: _imageFile != null 
+                      ? DecorationImage(image: FileImage(_imageFile!), fit: BoxFit.cover)
+                      : (_existingImageUrl != null 
+                          ? DecorationImage(image: NetworkImage(_existingImageUrl!), fit: BoxFit.cover) 
+                          : null),
                 ),
-                child: _imageFile == null 
+                child: (_imageFile == null && _existingImageUrl == null)
                     ? Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -223,25 +261,6 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
                     : null,
               ),
             ),
-            if (_imageFile != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 8.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton.icon(
-                      onPressed: _showImageOptions,
-                      icon: const Icon(Icons.edit),
-                      label: const Text("Change"),
-                    ),
-                    TextButton.icon(
-                      onPressed: () => setState(() => _imageFile = null),
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      label: const Text("Remove", style: TextStyle(color: Colors.red)),
-                    ),
-                  ],
-                ),
-              ),
 
             const SizedBox(height: 20),
             _label("Privacy"),
@@ -264,7 +283,7 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
               child: ElevatedButton.icon(
                 onPressed: _isLoading ? null : _submit,
                 icon: const Icon(Icons.publish),
-                label: const Text("Publish"),
+                label: Text(isEditing ? "Save Changes" : "Publish"),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: primaryColor,
                   foregroundColor: Colors.white,

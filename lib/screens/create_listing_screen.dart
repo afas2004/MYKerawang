@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
-import 'image_preview_screen.dart';
+import 'image_preview_screen.dart'; // Ensure this exists
 
 class CreateListingScreen extends StatefulWidget {
-  const CreateListingScreen({super.key});
+  final Map<String, dynamic>? itemToEdit; // NEW: Item to edit
+
+  const CreateListingScreen({super.key, this.itemToEdit});
 
   @override
   State<CreateListingScreen> createState() => _CreateListingScreenState();
@@ -13,16 +15,40 @@ class CreateListingScreen extends StatefulWidget {
 
 class _CreateListingScreenState extends State<CreateListingScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _titleController = TextEditingController();
-  final _priceController = TextEditingController();
-  final _descriptionController = TextEditingController();
+  late TextEditingController _titleController;
+  late TextEditingController _priceController;
+  late TextEditingController _descriptionController;
   
-  // Added Food and Others categories
   String _category = 'Books';
   final List<String> _categories = ['Books', 'Electronics', 'Food', 'Others', 'Clothing', 'Services'];
   
   File? _imageFile;
+  String? _existingImageUrl; // To hold old image if editing
   bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final item = widget.itemToEdit;
+    
+    // Pre-fill logic
+    _titleController = TextEditingController(text: item?['title'] ?? '');
+    _priceController = TextEditingController(text: item?['price']?.toString() ?? '');
+    _descriptionController = TextEditingController(text: item?['description'] ?? '');
+    
+    if (item != null) {
+      _category = item['category'] ?? 'Books';
+      _existingImageUrl = item['image_url'];
+    }
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _priceController.dispose();
+    _descriptionController.dispose();
+    super.dispose();
+  }
 
   Future<void> _pickImage(ImageSource source) async {
     try {
@@ -71,8 +97,9 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
 
     try {
       final supabase = Supabase.instance.client;
-      String? imageUrl;
+      String? imageUrl = _existingImageUrl; // Default to old image
       
+      // If new image picked, upload it
       if (_imageFile != null) {
         final fileExt = _imageFile!.path.split('.').last;
         final fileName = '${DateTime.now().millisecondsSinceEpoch}.$fileExt';
@@ -82,19 +109,28 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
         imageUrl = supabase.storage.from('images').getPublicUrl(path);
       }
 
-      await supabase.from('listings').insert({
+      final data = {
         'seller_id': user.id,
         'title': _titleController.text,
         'price': double.parse(_priceController.text),
         'category': _category,
         'description': _descriptionController.text,
         'image_url': imageUrl,
-        'fulfillment_type': 'Pickup', // Default
-      });
+        'fulfillment_type': 'Pickup',
+      };
+
+      if (widget.itemToEdit != null) {
+        // UPDATE Existing
+        await supabase.from('listings').update(data).eq('id', widget.itemToEdit!['id']);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Listing Updated!')));
+      } else {
+        // INSERT New
+        await supabase.from('listings').insert(data);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Listing Published!')));
+      }
 
       if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Listing Published!')));
+        Navigator.pop(context, true); // Return true to trigger refresh
       }
     } catch (e) {
       if (mounted) {
@@ -108,9 +144,10 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   @override
   Widget build(BuildContext context) {
     final primaryColor = Theme.of(context).colorScheme.primary;
+    final isEditing = widget.itemToEdit != null;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Sell Item')),
+      appBar: AppBar(title: Text(isEditing ? 'Edit Listing' : 'Sell Item')),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Form(
@@ -162,10 +199,12 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
               
               GestureDetector(
                 onTap: () {
-                  if (_imageFile == null) {
+                  if (_imageFile == null && _existingImageUrl == null) {
                     _showImageOptions();
                   } else {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => ImagePreviewScreen(imageFile: _imageFile)));
+                    // Preview logic if you have ImagePreviewScreen
+                    // Navigator.push(...) 
+                     _showImageOptions(); // Allow change on tap
                   }
                 },
                 child: Container(
@@ -175,9 +214,13 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                     color: Colors.grey.shade200,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: Colors.grey.shade300, style: BorderStyle.solid),
-                    image: _imageFile != null ? DecorationImage(image: FileImage(_imageFile!), fit: BoxFit.cover) : null
+                    image: _imageFile != null 
+                        ? DecorationImage(image: FileImage(_imageFile!), fit: BoxFit.cover)
+                        : (_existingImageUrl != null 
+                            ? DecorationImage(image: NetworkImage(_existingImageUrl!), fit: BoxFit.cover)
+                            : null),
                   ),
-                  child: _imageFile == null 
+                  child: (_imageFile == null && _existingImageUrl == null)
                       ? Column(
                           mainAxisAlignment: MainAxisAlignment.center, 
                           children: [
@@ -189,7 +232,8 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                       : null,
                 ),
               ),
-              if (_imageFile != null)
+              
+              if (_imageFile != null || _existingImageUrl != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 8.0),
                   child: Row(
@@ -200,11 +244,13 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                         icon: const Icon(Icons.edit),
                         label: const Text("Change"),
                       ),
-                      TextButton.icon(
-                        onPressed: () => setState(() => _imageFile = null),
-                        icon: const Icon(Icons.delete, color: Colors.red),
-                        label: const Text("Remove", style: TextStyle(color: Colors.red)),
-                      ),
+                      // Only allow removing if new file picked, can't remove mandatory image for now logic
+                      if (_imageFile != null)
+                        TextButton.icon(
+                          onPressed: () => setState(() => _imageFile = null),
+                          icon: const Icon(Icons.undo, color: Colors.orange),
+                          label: const Text("Undo New Image", style: TextStyle(color: Colors.orange)),
+                        ),
                     ],
                   ),
                 ),
@@ -222,7 +268,9 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
             padding: const EdgeInsets.symmetric(vertical: 16),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))
           ),
-          child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : const Text("Publish Listing"),
+          child: _isLoading 
+            ? const CircularProgressIndicator(color: Colors.white) 
+            : Text(isEditing ? "Save Changes" : "Publish Listing"),
         ),
       ),
     );
