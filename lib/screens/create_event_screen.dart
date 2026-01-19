@@ -249,7 +249,7 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
               title: const Text("Public Event"),
               subtitle: const Text("Visible to everyone"),
               value: _isPublic,
-              activeColor: primaryColor,
+              activeThumbColor: primaryColor,
               onChanged: (val) => setState(() => _isPublic = val),
             ),
           ],

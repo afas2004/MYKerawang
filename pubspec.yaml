@@ -36,7 +36,7 @@ dependencies:
   sqflite: ^2.3.0
   path: ^1.9.0
   intl: ^0.18.0
-  image_picker: ^1.0.4 # For Multimedia uploads
+  image_picker: ^1.2.1 # For Multimedia uploads
   url_launcher: ^6.1.14 # For WhatsApp redirect
   flutter_local_notifications: ^17.0.0 # For the notification proposal
   photo_view: ^0.14.0

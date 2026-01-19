@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'profile_screen.dart'; 
 
 class ItemDetailScreen extends StatelessWidget {
   final Map<String, dynamic> item;
