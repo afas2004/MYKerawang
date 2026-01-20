@@ -1,20 +1,18 @@
 import 'package:flutter/material.dart';
-import 'package:mykerawang/screens/home_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+
+// --- IMPORT YOUR SERVICES ---
+import 'services/notification_service.dart';
 import 'database_helper.dart';
 
-// --- IMPORT YOUR NEW SERVICE ---
-import 'services/notification_service.dart';
-
+// --- IMPORT YOUR SCREENS ---
+import 'screens/home_screen.dart';
 import 'screens/marketplace_screen.dart';
 import 'screens/events_screen.dart';
 import 'screens/profile_screen.dart'; 
-import 'screens/item_detail_screen.dart';
-import 'screens/event_detail_screen.dart';
 import 'screens/login_screen.dart';
-import 'screens/notifications_screen.dart'; // Import if you have it
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -68,7 +66,7 @@ class _AuthGateState extends State<AuthGate> {
     _setupNotificationListener();
   }
 
-  // THE MAGIC LISTENER
+  // THE MAGIC LISTENER (Timezone Fixed)
   void _setupNotificationListener() {
     Supabase.instance.client.auth.onAuthStateChange.listen((data) {
       final event = data.event;
@@ -79,6 +77,7 @@ class _AuthGateState extends State<AuthGate> {
         
         // 1. Ask for Android Permission immediately
         NotificationService.requestPermission();
+        debugPrint("🔔 Notification Listener STARTED for ${session.user.email}");
 
         // 2. Watch the 'notifications' table for new rows
         Supabase.instance.client
@@ -91,16 +90,27 @@ class _AuthGateState extends State<AuthGate> {
                 // Get the newest notification
                 final latest = data.last; 
                 
-                // Only show popup if it was created < 10 seconds ago
-                // (This prevents 50 popups from appearing when you first open the app)
-                final created = DateTime.parse(latest['created_at']);
-                final now = DateTime.now();
+                // --- TIMEZONE FIX ---
+                // Convert everything to UTC to ensure correct comparison
+                final created = DateTime.parse(latest['created_at']).toUtc(); 
+                final now = DateTime.now().toUtc(); 
                 
-                if (now.difference(created).inSeconds < 10) {
+                final difference = now.difference(created).inSeconds.abs();
+
+                debugPrint("🔔 New Data! Title: ${latest['title']}");
+                debugPrint("   Created (UTC): $created");
+                debugPrint("   Now (UTC):     $now");
+                debugPrint("   Difference:    $difference seconds");
+
+                // Check if it is recent (less than 30 seconds to be safe)
+                if (difference < 30) {
+                   debugPrint("✅ TRIGGERING POPUP NOW!");
                    NotificationService.showNotification(
                      latest['title'], 
                      latest['message']
                    );
+                } else {
+                   debugPrint("❌ Too old, skipping popup.");
                 }
               }
             });
@@ -148,7 +158,3 @@ class _MainScaffoldState extends State<MainScaffold> {
     );
   }
 }
-
-// ... Rest of your HomeScreen code (copy it back if it got deleted, or ask me to paste it) ...
-// Since HomeScreen is usually large, make sure you keep the code you had for it!
-// If you need the HomeScreen code again, let me know.

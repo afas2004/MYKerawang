@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'notifications_screen.dart';
@@ -77,21 +78,6 @@ class HomeScreen extends StatelessWidget {
                 ),
               ),
 
-              // Search Bar
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: TextField(
-                  decoration: InputDecoration(
-                    hintText: 'Search events, items...',
-                    prefixIcon: const Icon(Icons.search),
-                    filled: true,
-                    fillColor: Colors.grey.shade100,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: BorderSide.none),
-                    contentPadding: const EdgeInsets.symmetric(vertical: 0),
-                  ),
-                ),
-              ),
-
               const SizedBox(height: 24),
               
               // Happening Soon Header
@@ -146,7 +132,16 @@ class HomeScreen extends StatelessWidget {
                                   children: [
                                     Text(event['title'], maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                                     const SizedBox(height: 4),
-                                    Text(event['start_datetime'].toString().split(' ')[0], style: TextStyle(color: Colors.grey.shade600, fontSize: 14)),
+                                    Text(
+  DateFormat('d MMM y, h:mm a').format(
+    DateTime.parse(event['start_datetime']).toLocal()
+  ),
+  style: TextStyle(
+    color: Theme.of(context).primaryColor, 
+    fontWeight: FontWeight.bold, 
+    fontSize: 12
+  ),
+)
                                   ],
                                 ),
                               )
