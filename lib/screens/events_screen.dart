@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
@@ -11,10 +12,7 @@ class EventsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // 1. Provide the Cubit
-    return BlocProvider(
-      create: (context) => EventsCubit(),
-      child: const EventsView(),
-    );
+    return const EventsView();
   }
 }
 
@@ -63,10 +61,16 @@ class _EventsViewState extends State<EventsView> {
                         selected: isSelected,
                         // Call Cubit
                         onSelected: (v) => context.read<EventsCubit>().updateTag(tag),
-                        backgroundColor: Colors.white,
-                        selectedColor: Colors.purple[100],
-                        checkmarkColor: Colors.purple,
+                        backgroundColor: Theme.of(context).colorScheme.surface,
+                        selectedColor: Theme.of(context).colorScheme.secondaryContainer,
+                        checkmarkColor: Theme.of(context).colorScheme.onSecondaryContainer,
+                        labelStyle: TextStyle(
+                        color: isSelected 
+                            ? Theme.of(context).colorScheme.onSecondaryContainer 
+                            : Theme.of(context).colorScheme.onSurface,
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                       ),
+                      )
                     );
                   },
                 ),
@@ -85,9 +89,9 @@ class _EventsViewState extends State<EventsView> {
                         onChanged: (v) => context.read<EventsCubit>().updateSearch(v),
                         decoration: InputDecoration(
                           hintText: "Search events...",
-                          prefixIcon: const Icon(Icons.search),
+                          prefixIcon: Icon(Icons.search, color: Theme.of(context).colorScheme.onSurfaceVariant),
                           filled: true,
-                          fillColor: Colors.grey[100],
+                          fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
                           border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
                               borderSide: BorderSide.none),
@@ -113,7 +117,7 @@ class _EventsViewState extends State<EventsView> {
                                           builder: (_) => EventDetailScreen(event: event))),
                                   child: Container(
                                     decoration: BoxDecoration(
-                                      color: Colors.white,
+                                      color: Theme.of(context).cardColor,
                                       borderRadius: BorderRadius.circular(16),
                                       boxShadow: [
                                         BoxShadow(color: Colors.black12, blurRadius: 4)
@@ -123,29 +127,26 @@ class _EventsViewState extends State<EventsView> {
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
                                         ClipRRect(
-                                          borderRadius: const BorderRadius.vertical(
-                                              top: Radius.circular(16)),
-                                          child: Image.network(
-                                            event['image_url'] ??
-                                                'https://via.placeholder.com/300',
+                                          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                                          child: CachedNetworkImage(
+                                            imageUrl: event['image_url'] ?? '',
+                                            fadeInDuration: Duration.zero,
+                                            fadeOutDuration: Duration.zero,
                                             height: 180,
                                             width: double.infinity,
                                             fit: BoxFit.cover,
-                                            // ADD THIS PROTECTOR:
-                                            errorBuilder:
-                                                (context, error, stackTrace) {
-                                                  return Container(
-                                                    height: 180,
-                                                    color: Colors.grey[200],
-                                                    child: const Center(
-                                                      child: Icon(
-                                                        Icons.event_busy,
-                                                        color: Colors.grey,
-                                                        size: 40,
-                                                      ),
-                                                    ),
-                                                  );
-                                                },
+                                            placeholder: (context, url) => Container(
+                                              height: 180, 
+                                              color: Theme.of(context).colorScheme.surfaceContainerHighest, 
+                                              child: const Center(child: CircularProgressIndicator())
+                                            ),
+                                            errorWidget: (context, url, error) => Container(
+                                              height: 180,
+                                              color: Theme.of(context).colorScheme.surfaceContainerHighest, 
+                                              child: const Center(
+                                                child: Icon(Icons.event_busy, color: Colors.grey, size: 40),
+                                              ),
+                                            ),
                                           ),
                                         ),
                                         Padding(
@@ -162,7 +163,7 @@ class _EventsViewState extends State<EventsView> {
                                                   child: Text(
                                                     "#$t",
                                                     style: TextStyle(
-                                                      color: Colors.purple[700],
+                                                      color: Theme.of(context).colorScheme.primary,
                                                       fontSize: 12,
                                                       fontWeight: FontWeight.bold,
                                                     ),
@@ -211,10 +212,11 @@ class _EventsViewState extends State<EventsView> {
                   ],
                 ),
           floatingActionButton: FloatingActionButton(
+            heroTag: 'events_fab',
             onPressed: () => Navigator.push(
                 context, MaterialPageRoute(builder: (_) => const CreateEventScreen())),
-            backgroundColor: Colors.purple,
-            child: const Icon(Icons.add, color: Colors.white),
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            child: Icon(Icons.add, color: Theme.of(context).colorScheme.onPrimary),
           ),
         );
       },

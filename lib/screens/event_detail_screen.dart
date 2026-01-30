@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mykerawang/screens/image_preview_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:photo_view/photo_view.dart';
@@ -32,7 +33,66 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   @override
   void initState() {
     super.initState();
-    _loadEventData();
+    // 1. INSTANT LOAD: Use the data passed from the previous screen
+    if (widget.event != null) {
+      _eventData = widget.event;
+      _isLoading = false; // Show content immediately
+    }
+    
+    // 2. BACKGROUND REFRESH: Fetch organizer & attendee count silently
+    _refreshEventDetails();
+  }
+
+  Future<void> _refreshEventDetails() async {
+    final supabase = Supabase.instance.client;
+    final user = supabase.auth.currentUser;
+
+    try {
+      final String idToFetch = widget.event?['id'] ?? widget.eventId;
+      
+      // Fetch fresh data (in case something changed)
+      final freshEventData = await supabase.from('events').select().eq('id', idToFetch).single();
+      
+      // Fetch Organizer
+      final organizer = await supabase
+          .from('profiles')
+          .select()
+          .eq('id', freshEventData['organizer_id'])
+          .maybeSingle();
+
+      // Fetch Attendees
+      final attendeesList = await supabase
+          .from('event_attendees')
+          .select('user_id')
+          .eq('event_id', idToFetch);
+      
+      final int realCount = (attendeesList as List).length;
+      
+      bool joined = false;
+      bool owner = widget.isOwnerOverride; 
+      
+      if (user != null) {
+        if (!owner) {
+             final userId = user.id.toString().trim();
+             final orgId = (freshEventData['organizer_id'] ?? '').toString().trim();
+             owner = (userId == orgId && userId.isNotEmpty); 
+        }
+        joined = (attendeesList).any((entry) => entry['user_id'] == user.id);
+      }
+
+      if (mounted) {
+        setState(() {
+          _eventData = freshEventData; // Update with fresh data
+          _organizerProfile = organizer;
+          _attendeeCount = realCount;
+          _isJoined = joined;
+          _isOwner = owner;
+          // _isLoading is already false, so no spinner needed!
+        });
+      }
+    } catch (e) {
+      debugPrint("Error refreshing event: $e");
+    }
   }
 
   Future<void> _loadEventData() async {
@@ -139,7 +199,6 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     if (_isLoading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
     if (_eventData == null) return const Scaffold(body: Center(child: Text("Event not found")));
 
-    final primary = const Color(0xFFE02097);
     final start = DateTime.parse(_eventData!['start_datetime']);
     String timeString = DateFormat('d MMM, h:mm a').format(start);
 
@@ -153,14 +212,25 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
           SliverAppBar(
             expandedHeight: 300,
             pinned: true,
+            leading: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: CircleAvatar(
+                backgroundColor: Colors.black.withOpacity(0.5), // Semi-transparent dark circle
+                child: IconButton(
+                  icon: const Icon(Icons.arrow_back, color: Colors.white), // White arrow always pops
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ),
+            ),
             flexibleSpace: FlexibleSpaceBar(
               background: GestureDetector(
                 onTap: () {
-                   Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(
-                    backgroundColor: Colors.black,
-                    appBar: AppBar(backgroundColor: Colors.transparent, iconTheme: const IconThemeData(color: Colors.white)),
-                    body: PhotoView(imageProvider: CachedNetworkImageProvider(_eventData!['image_url'] ?? '')),
-                  )));
+                  Navigator.push(
+                    context, 
+                    MaterialPageRoute(
+                      builder: (_) => ImagePreviewScreen(imageUrl: _eventData!['image_url'])
+                    )
+                  );
                 },
                 // UPDATED: Uses CachedNetworkImage
                 child: CachedNetworkImage(
@@ -185,8 +255,9 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                       child: Wrap(
                         spacing: 8,
                         children: tags.map((tag) => Chip(
-                          label: Text("#$tag", style: const TextStyle(fontSize: 12, color: Colors.white)),
-                          backgroundColor: primary.withOpacity(0.8),
+                          label: Text("#$tag", style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSecondaryContainer)),
+                          // Use Theme color
+                          backgroundColor: Theme.of(context).colorScheme.secondaryContainer, 
                           side: BorderSide.none,
                           visualDensity: VisualDensity.compact,
                         )).toList(),
@@ -195,30 +266,39 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
 
                   Text(_eventData!['title'], style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 24),
-                  _infoRow(Icons.calendar_month, timeString, primary),
-                  _infoRow(Icons.location_on, _eventData!['location'] ?? 'UiTM Kerawang', primary),
-                  _infoRow(Icons.group, "$_attendeeCount people going", primary),
-                  
+                  _infoRow(Icons.calendar_month, timeString, Theme.of(context).colorScheme.primary),
+                  _infoRow(Icons.location_on, _eventData!['location'] ?? 'UiTM Kerawang', Theme.of(context).colorScheme.primary),
+                  _infoRow(Icons.group, "$_attendeeCount people going", Theme.of(context).colorScheme.primary),
                   const SizedBox(height: 20),
                   
                   // Organizer Card
                   if (_organizerProfile != null)
                     Container(
                       padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade200), borderRadius: BorderRadius.circular(12), color: Colors.white),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.2)),
+                        borderRadius: BorderRadius.circular(12),
+                        // Adapts to Dark Mode
+                        color: Theme.of(context).colorScheme.surfaceContainer, 
+                      ),
                       child: Row(
                         children: [
                           CircleAvatar(
-                            // UPDATED: Cached Avatar
-                            backgroundImage: _organizerProfile!['avatar_url'] != null 
-                                ? CachedNetworkImageProvider(_organizerProfile!['avatar_url']) 
+                            backgroundImage: _organizerProfile!['avatar_url'] != null
+                                ? CachedNetworkImageProvider(_organizerProfile!['avatar_url'])
                                 : null,
-                            child: _organizerProfile!['avatar_url'] == null ? const Icon(Icons.person) : null,
+                            onBackgroundImageError: _organizerProfile!['avatar_url'] != null 
+                                ? (_, __) {} 
+                                : null,
+                            child: (_organizerProfile!['avatar_url'] == null)
+                                ? Icon(Icons.person, color: Theme.of(context).colorScheme.onSurfaceVariant)
+                                : null,
                           ),
-                          const SizedBox(width: 12),
+                          SizedBox(width: 12),
                           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                             Text(_organizerProfile!['full_name'] ?? 'Organizer', style: const TextStyle(fontWeight: FontWeight.bold)),
-                            Text("Event Host", style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                            // Grey Text Fix
+                            Text("Event Host", style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12)),
                           ]),
                         ],
                       ),
@@ -227,7 +307,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                   const Divider(height: 40),
                   const Text("About", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
-                  Text(_eventData!['description'] ?? 'No description provided.', style: TextStyle(color: Colors.grey[800], height: 1.5)),
+                  Text(_eventData!['description'] ?? 'No description provided.', style: TextStyle(color: Theme.of(context).colorScheme.onSurface, height: 1.5)),
                   const SizedBox(height: 100),
                 ],
               ),
@@ -238,40 +318,51 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       bottomSheet: Container(
         padding: const EdgeInsets.all(16),
         width: double.infinity,
-        decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, -5))]),
+        decoration: BoxDecoration(
+          // Background Fix
+          color: Theme.of(context).scaffoldBackgroundColor, 
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, -5))]
+        ),
         child: _isOwner 
           ? Row(
+              // ... (Update/Delete buttons same logic as Item Detail) ...
               children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: _deleteEvent,
-                    style: OutlinedButton.styleFrom(foregroundColor: Colors.red, side: const BorderSide(color: Colors.red)),
-                    child: const Text("Delete"),
+                  // Delete Button
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _deleteEvent,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Theme.of(context).colorScheme.error,
+                        side: BorderSide(color: Theme.of(context).colorScheme.error)
+                      ),
+                      child: const Text("Delete"),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () async {
-                       final result = await Navigator.push(
-                         context, 
-                         MaterialPageRoute(builder: (_) => CreateEventScreen(eventToEdit: _eventData))
-                       );
-                       if (result == true && mounted) {
-                          _loadEventData(); 
-                       }
-                    },
-                    style: ElevatedButton.styleFrom(backgroundColor: primary, foregroundColor: Colors.white),
-                    child: const Text("Update"),
+                  const SizedBox(width: 12),
+                  // Update Button
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () async {},
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: Theme.of(context).colorScheme.primary,
+                          foregroundColor: Theme.of(context).colorScheme.onPrimary
+                      ),
+                      child: const Text("Update"),
+                    ),
                   ),
-                ),
               ],
             )
           : ElevatedButton(
               onPressed: _toggleJoin,
               style: ElevatedButton.styleFrom(
-                backgroundColor: _isJoined ? Colors.grey[300] : primary, 
-                foregroundColor: _isJoined ? Colors.black : Colors.white
+                // DYNAMIC JOIN BUTTON
+                backgroundColor: _isJoined 
+                    ? Theme.of(context).colorScheme.surfaceContainerHighest // Grey if joined
+                    : Theme.of(context).colorScheme.primary, // Theme Color if not
+                
+                foregroundColor: _isJoined 
+                    ? Theme.of(context).colorScheme.onSurface 
+                    : Theme.of(context).colorScheme.onPrimary
               ),
               child: Text(_isJoined ? "Joined" : "Join Event", style: const TextStyle(fontWeight: FontWeight.bold)),
             ),

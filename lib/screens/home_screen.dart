@@ -1,15 +1,47 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:mykerawang/screens/events_screen.dart';
+import 'package:mykerawang/screens/marketplace_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'notifications_screen.dart';
 
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+class HomeScreen extends StatefulWidget {
+  final Function(int) onTabChange;
+  const HomeScreen({super.key, required this.onTabChange});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  // Store the "Futures" so they don't reload on rebuilds
+  late Future<List<dynamic>> _eventsFuture;
+  late Future<List<dynamic>> _listingsFuture;
+  late Future<Map<String, dynamic>?> _profileFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    final supabase = Supabase.instance.client;
+    
+    // Load data ONCE when the app starts
+    _eventsFuture = supabase.from('events').select().limit(5);
+    _listingsFuture = supabase.from('listings').select().limit(4);
+    _profileFuture = _fetchUserProfile(supabase);
+  }
+  
+  // Helper to keep code clean
+  static Future<Map<String, dynamic>?> _fetchUserProfile(SupabaseClient supabase) async {
+     try {
+       final user = supabase.auth.currentUser;
+       if (user == null) return null;
+       return await supabase.from('profiles').select().eq('id', user.id).single();
+     } catch (e) { return null; }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final supabase = Supabase.instance.client;
 
     return Scaffold(
       body: SafeArea(
@@ -23,9 +55,9 @@ class HomeScreen extends StatelessWidget {
                 child: Row(
                   children: [
                     FutureBuilder(
-                      future: _fetchUserProfile(supabase),
+                      future: _profileFuture,
                       builder: (context, snapshot) {
-                        final profileData = snapshot.data as Map<String, dynamic>?;
+                        final profileData = snapshot.data;
                         final avatarUrl = profileData?['avatar_url'] as String?;
 
                         return Container(
@@ -33,12 +65,14 @@ class HomeScreen extends StatelessWidget {
                           height: 48,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: Colors.grey[200],
+                            color: Theme.of(context).colorScheme.surfaceContainerHighest,
                           ),
                           child: ClipOval(
                             child: avatarUrl != null
                                 ? CachedNetworkImage(
                                     imageUrl: avatarUrl,
+                                    fadeInDuration: Duration.zero,
+                                    fadeOutDuration: Duration.zero,
                                     fit: BoxFit.cover,
                                     // Show spinner while loading
                                     placeholder: (context, url) => const Padding(
@@ -46,17 +80,17 @@ class HomeScreen extends StatelessWidget {
                                       child: CircularProgressIndicator(strokeWidth: 2),
                                     ),
                                     // Show Person Icon if URL fails (Safe Fallback)
-                                    errorWidget: (context, url, error) => const Icon(Icons.person, color: Colors.grey),
+                                    errorWidget: (context, url, error) => Icon(Icons.person, color: Theme.of(context).colorScheme.primary),
                                   )
                                 // Show Person Icon if URL is null
-                                : const Icon(Icons.person, color: Colors.grey),
+                                : Icon(Icons.person, color: Theme.of(context).colorScheme.primary),
                           ),
                         );
                       },
                     ),
                     const SizedBox(width: 12),
                     FutureBuilder(
-                      future: _fetchUserProfile(supabase),
+                      future: _profileFuture,
                       builder: (context, snapshot) {
                         final fullName = (snapshot.data as Map<String, dynamic>?)?['full_name'] as String? ?? 'User';
                         return Text('Welcome, $fullName!', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold));
@@ -81,9 +115,20 @@ class HomeScreen extends StatelessWidget {
               const SizedBox(height: 24),
               
               // Happening Soon Header
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16.0),
-                child: Text("Happening Soon", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text("Happening Soon", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                    TextButton(
+                      onPressed: () {
+                        widget.onTabChange(2); // Switch to Events tab
+                      }, 
+                      child: const Text("See All")
+                    ),
+                  ],
+                ),
               ),
               
               const SizedBox(height: 12),
@@ -92,7 +137,7 @@ class HomeScreen extends StatelessWidget {
               SizedBox(
                 height: 240,
                 child: FutureBuilder(
-                  future: supabase.from('events').select().limit(5),
+                  future: _eventsFuture,
                   builder: (context, snapshot) {
                     if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
                     final events = snapshot.data as List;
@@ -106,22 +151,24 @@ class HomeScreen extends StatelessWidget {
                         final event = events[index];
                         return Container(
                           width: 260,
-                          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)]),
+                          decoration: BoxDecoration(color: Theme.of(context).cardColor, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)]),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Expanded(
                                 child: CachedNetworkImage(
                                   imageUrl: event['image_url'] ?? '',
+                                  fadeInDuration: Duration.zero,
+                                  fadeOutDuration: Duration.zero,
                                   fit: BoxFit.cover,
                                   width: double.infinity,
                                   placeholder: (context, url) => Container(
-                                    color: Colors.grey[200], 
+                                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
                                     child: const Center(child: CircularProgressIndicator())
                                   ),
                                   errorWidget: (context, url, error) => Container(
-                                    color: Colors.grey[200], 
-                                    child: const Icon(Icons.broken_image, color: Colors.grey)
+                                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                    child: Icon(Icons.broken_image, color: Theme.of(context).colorScheme.primary,)
                                   ),
                                 ),
                               ),
@@ -133,15 +180,15 @@ class HomeScreen extends StatelessWidget {
                                     Text(event['title'], maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                                     const SizedBox(height: 4),
                                     Text(
-  DateFormat('d MMM y, h:mm a').format(
-    DateTime.parse(event['start_datetime']).toLocal()
-  ),
-  style: TextStyle(
-    color: Theme.of(context).primaryColor, 
-    fontWeight: FontWeight.bold, 
-    fontSize: 12
-  ),
-)
+                                      DateFormat('d MMM y, h:mm a').format(
+                                        DateTime.parse(event['start_datetime']).toLocal()
+                                      ),
+                                      style: TextStyle(
+                                        color: Theme.of(context).colorScheme.primary, 
+                                        fontWeight: FontWeight.bold, 
+                                        fontSize: 12
+                                      ),
+                                    )
                                   ],
                                 ),
                               )
@@ -163,14 +210,16 @@ class HomeScreen extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text("New in Marketplace", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                    TextButton(onPressed: () {}, child: const Text("See All"))
+                    TextButton(onPressed: () {
+                      widget.onTabChange(1); // Switch to Marketplace tab
+                    }, child: const Text("See All"))
                   ],
                 ),
               ),
 
               // Marketplace Grid (Replicating the 2-column grid in home.html)
               FutureBuilder(
-                future: supabase.from('listings').select().limit(4),
+                future: _listingsFuture,
                 builder: (context, snapshot) {
                   if (!snapshot.hasData) return const SizedBox();
                   final items = snapshot.data as List;
@@ -189,17 +238,19 @@ class HomeScreen extends StatelessWidget {
                     itemBuilder: (context, index) {
                       final item = items[index];
                       return Container(
-                        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+                        decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(12)),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Expanded(
                               child: CachedNetworkImage(
                                 imageUrl: item['image_url'] ?? '',
+                                fadeInDuration: Duration.zero,
+                                fadeOutDuration: Duration.zero,
                                 fit: BoxFit.cover,
                                 width: double.infinity,
-                                placeholder: (context, url) => Container(color: Colors.grey[200]),
-                                errorWidget: (context, url, error) => const Icon(Icons.store, color: Colors.grey),
+                                placeholder: (context, url) => Container(color: Theme.of(context).colorScheme.surfaceContainerHighest,),
+                                errorWidget: (context, url, error) => Icon(Icons.store, color: Theme.of(context).colorScheme.primary),
                               ),
                             ),
                             Padding(
@@ -224,23 +275,5 @@ class HomeScreen extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  static Future<Map<String, dynamic>?> _fetchUserProfile(SupabaseClient supabase) async {
-    try {
-      final user = supabase.auth.currentUser;
-      if (user == null) return null;
-      
-      final profileData = await supabase
-          .from('profiles')
-          .select()
-          .eq('id', user.id)
-          .single();
-      
-      return profileData;
-    } catch (e) {
-      debugPrint("Error fetching profile: $e");
-      return null;
-    }
   }
 }

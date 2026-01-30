@@ -48,7 +48,9 @@ class ProfileCubit extends Cubit<ProfileState> {
       final user = _supabase.auth.currentUser;
       if (user == null) return;
 
-      emit(state.copyWith(isLoading: true));
+      if (state.profile == null) {
+        emit(state.copyWith(isLoading: true));
+      }
 
       // 1. Fetch Profile
       final profileData = await _supabase
@@ -70,14 +72,14 @@ class ProfileCubit extends Cubit<ProfileState> {
           .eq('organizer_id', user.id); 
 
       emit(state.copyWith(
-        isLoading: false,
-        profile: profileData,
-        listings: List<Map<String, dynamic>>.from(listingsData),
-        events: List<Map<String, dynamic>>.from(eventsData),
-      ));
-    } catch (e) {
-      emit(state.copyWith(isLoading: false, errorMessage: e.toString()));
-    }
+          isLoading: false, // Done!
+          profile: profileData,
+          listings: listingsData,
+          events: eventsData,
+        ));
+      } catch (e) {
+        emit(state.copyWith(isLoading: false, errorMessage: e.toString()));
+      }
   }
 
   // ... (Keep updateProfile and uploadAvatar functions EXACTLY as they were before) ...

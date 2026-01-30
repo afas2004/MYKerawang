@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:mykerawang/screens/main_scaffold.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
-
+import 'theme_cubit.dart';
 // --- IMPORT YOUR SERVICES ---
 import 'services/notification_service.dart';
 import 'database_helper.dart';
@@ -14,17 +15,20 @@ import 'screens/events_screen.dart';
 import 'screens/profile_screen.dart'; 
 import 'screens/login_screen.dart';
 
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'screens/events_cubit.dart';
+import 'screens/marketplace_cubit.dart';
+import 'screens/profile_cubit.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // 1. Initialize Supabase
   await Supabase.initialize(
-    // REPLACE WITH YOUR URL AND KEY IF THEY ARE DIFFERENT
     url: 'https://zxjuqpqzyzmegdjttzyz.supabase.co',
     anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp4anVxcHF6eXptZWdkanR0enl6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0MzAxNzIsImV4cCI6MjA4MDAwNjE3Mn0.UD_aL16G55CFD6TAOutU4oiGsJCaU5wq-wqFf6OnW5c',
   );
 
-  // 2. Initialize the Notification System (NEW)
   await NotificationService.init();
 
   runApp(const MyApp());
@@ -35,17 +39,52 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'MYKerawang',
-      theme: ThemeData(
-        useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFFAFAFA),
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF5B3E96)), 
-        textTheme: GoogleFonts.poppinsTextTheme(),
+    // 1. Initialize ALL Cubits here (Global State)
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider(create: (context) => EventsCubit()),
+        BlocProvider(create: (context) => MarketplaceCubit()),
+        BlocProvider(create: (context) => ProfileCubit()),
+        BlocProvider(create: (context) => ThemeCubit()),
+      ],
+      child: BlocBuilder<ThemeCubit, ThemeState>(
+        builder: (context, themeState) {
+          return MaterialApp(
+            debugShowCheckedModeBanner: false,
+            title: 'MYKerawang',
+            
+            // 3. DEFINE LIGHT THEME
+            theme: ThemeData(
+              useMaterial3: true,
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: themeState.seedColor, // Your Purple
+                brightness: Brightness.light,
+              ),
+              // Fix Navbar Background automatically
+              navigationBarTheme: NavigationBarThemeData(
+                backgroundColor: ColorScheme.fromSeed(seedColor: themeState.seedColor, brightness: Brightness.light).surfaceContainer,
+              ),
+            ),
+
+            // 4. DEFINE DARK THEME (Flutter does the magic automatically)
+            darkTheme: ThemeData(
+              useMaterial3: true,
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: themeState.seedColor, // Same Purple
+                brightness: Brightness.dark, // <--- This flips all colors
+              ),
+              // Fix Navbar Background automatically
+              navigationBarTheme: NavigationBarThemeData(
+                backgroundColor: ColorScheme.fromSeed(seedColor: themeState.seedColor, brightness: Brightness.light).surfaceContainer,
+              ),
+            ),
+
+            // 5. CONNECT THE MODE
+            themeMode: themeState.themeMode,
+            home: const AuthGate(),
+          );
+        },
       ),
-      // We start at AuthGate to decide where to go
-      home: const AuthGate(),
     );
   }
 }
@@ -123,38 +162,5 @@ class _AuthGateState extends State<AuthGate> {
     // Standard Session Check
     final session = Supabase.instance.client.auth.currentSession;
     return session == null ? const LoginScreen() : const MainScaffold();
-  }
-}
-
-class MainScaffold extends StatefulWidget {
-  const MainScaffold({super.key});
-  @override
-  State<MainScaffold> createState() => _MainScaffoldState();
-}
-
-class _MainScaffoldState extends State<MainScaffold> {
-  int _index = 0;
-  final _pages = [
-    const HomeScreen(),
-    const MarketplaceScreen(), 
-    const EventsScreen(),     
-    const ProfileScreen(),    
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: _pages[_index],
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_rounded), label: 'Home'),
-          NavigationDestination(icon: Icon(Icons.store_mall_directory_rounded), label: 'Market'),
-          NavigationDestination(icon: Icon(Icons.calendar_month_rounded), label: 'Events'),
-          NavigationDestination(icon: Icon(Icons.person_rounded), label: 'Profile'),
-        ],
-      ),
-    );
   }
 }

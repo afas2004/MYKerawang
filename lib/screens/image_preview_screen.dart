@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:io';
+import 'package:photo_view/photo_view.dart'; // Ensure you have this package
+import 'package:cached_network_image/cached_network_image.dart';
 
 class ImagePreviewScreen extends StatelessWidget {
   final File? imageFile;
@@ -17,19 +19,27 @@ class ImagePreviewScreen extends StatelessWidget {
         elevation: 0,
       ),
       body: Center(
-        child: InteractiveViewer(
-          panEnabled: true, // Set it to false to prevent panning.
-          boundaryMargin: const EdgeInsets.all(20),
-          minScale: 0.5,
-          maxScale: 4,
-          child: imageFile != null
-              ? Image.file(imageFile!)
-              : Image.network(
-                  imageUrl ?? '',
-                  errorBuilder: (context, error, stackTrace) => 
-                    const Icon(Icons.broken_image, color: Colors.white, size: 50),
+        child: imageFile != null
+            ? Image.file(imageFile!)
+            : PhotoView(
+                // Use CachedNetworkImageProvider for better caching & error handling
+                imageProvider: CachedNetworkImageProvider(imageUrl ?? ''),
+                // This prevents the crash if the URL is 404 or broken
+                errorBuilder: (context, error, stackTrace) {
+                  return const Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.broken_image, color: Colors.white, size: 50),
+                      SizedBox(height: 10),
+                      Text("Image unavailable", style: TextStyle(color: Colors.white)),
+                    ],
+                  );
+                },
+                // Optional: Show a spinner while loading full quality
+                loadingBuilder: (context, event) => const Center(
+                  child: CircularProgressIndicator(color: Colors.white),
                 ),
-        ),
+              ),
       ),
     );
   }

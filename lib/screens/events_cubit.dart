@@ -48,10 +48,9 @@ class EventsCubit extends Cubit<EventsState> {
   final _supabase = Supabase.instance.client;
 
   Future<void> _loadData() async {
-    // 1. Show loading initially
+   
     emit(state.copyWith(isLoading: true));
 
-    // 2. FAST: Load from SQLite immediately
     final cachedData = await DatabaseHelper.instance.getCachedEvents();
     
     if (cachedData.isNotEmpty) {
