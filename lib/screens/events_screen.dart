@@ -117,10 +117,17 @@ class _EventsViewState extends State<EventsView> {
                                           builder: (_) => EventDetailScreen(event: event))),
                                   child: Container(
                                     decoration: BoxDecoration(
-                                      color: Theme.of(context).cardColor,
-                                      borderRadius: BorderRadius.circular(16),
+                                      color: Theme.of(context).colorScheme.surfaceContainer,
+                                      border: Border.all(
+                                        color: Theme.of(context).dividerColor.withOpacity(0.1),
+                                        width: 1,
+                                      ),
                                       boxShadow: [
-                                        BoxShadow(color: Colors.black12, blurRadius: 4)
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.05), // Subtle shadow
+                                          blurRadius: 10,
+                                          offset: const Offset(0, 4),
+                                        )
                                       ],
                                     ),
                                     child: Column(
@@ -143,8 +150,8 @@ class _EventsViewState extends State<EventsView> {
                                             errorWidget: (context, url, error) => Container(
                                               height: 180,
                                               color: Theme.of(context).colorScheme.surfaceContainerHighest, 
-                                              child: const Center(
-                                                child: Icon(Icons.event_busy, color: Colors.grey, size: 40),
+                                              child: Center(
+                                                child: Icon(Icons.event_busy, color: Theme.of(context).colorScheme.onSurfaceVariant, size: 40),
                                               ),
                                             ),
                                           ),
@@ -181,11 +188,11 @@ class _EventsViewState extends State<EventsView> {
                                               Row(
                                                 children: [
                                                   Icon(Icons.calendar_today,
-                                                      size: 16, color: Colors.grey[600]),
+                                                      size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
                                                   const SizedBox(width: 8),
                                                   Text(
                                                       DateFormat('dd MMM, hh:mm a').format(date),
-                                                      style: TextStyle(color: Colors.grey[600])),
+                                                      style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
                                                 ],
                                               ),
                                               const SizedBox(height: 4),
@@ -193,10 +200,10 @@ class _EventsViewState extends State<EventsView> {
                                               Row(
                                                 children: [
                                                   Icon(Icons.location_on,
-                                                      size: 16, color: Colors.grey[600]),
+                                                      size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
                                                   const SizedBox(width: 8),
                                                   Text(event['location'] ?? 'TBA',
-                                                      style: TextStyle(color: Colors.grey[600])),
+                                                      style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
                                                 ],
                                               ),
                                             ],

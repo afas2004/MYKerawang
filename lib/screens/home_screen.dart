@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:mykerawang/screens/event_detail_screen.dart';
 import 'package:mykerawang/screens/events_screen.dart';
 import 'package:mykerawang/screens/marketplace_screen.dart';
+import 'package:mykerawang/widgets/universal_card.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'notifications_screen.dart';
@@ -24,13 +26,23 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     final supabase = Supabase.instance.client;
-    
-    // Load data ONCE when the app starts
-    _eventsFuture = supabase.from('events').select().limit(5);
-    _listingsFuture = supabase.from('listings').select().limit(4);
+  
+    // 1. FILTER PAST EVENTS
+    // "gte" means Greater Than or Equal to.
+    // We compare 'end_datetime' to the current time (ISO string).
+    final nowStr = DateTime.now().toUtc().toIso8601String();
+
+    _eventsFuture = supabase
+        .from('events')
+        .select()
+       .gte('end_datetime', nowStr) // <--- THIS LINE FIXES THE BUG
+        .order('start_datetime', ascending: true)
+        .limit(5);
+
+    _listingsFuture = supabase.from('listings').select().limit(5);
     _profileFuture = _fetchUserProfile(supabase);
   }
-  
+
   // Helper to keep code clean
   static Future<Map<String, dynamic>?> _fetchUserProfile(SupabaseClient supabase) async {
      try {
@@ -149,51 +161,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       separatorBuilder: (_, __) => const SizedBox(width: 16),
                       itemBuilder: (context, index) {
                         final event = events[index];
-                        return Container(
-                          width: 260,
-                          decoration: BoxDecoration(color: Theme.of(context).cardColor, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)]),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: CachedNetworkImage(
-                                  imageUrl: event['image_url'] ?? '',
-                                  fadeInDuration: Duration.zero,
-                                  fadeOutDuration: Duration.zero,
-                                  fit: BoxFit.cover,
-                                  width: double.infinity,
-                                  placeholder: (context, url) => Container(
-                                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                                    child: const Center(child: CircularProgressIndicator())
-                                  ),
-                                  errorWidget: (context, url, error) => Container(
-                                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                                    child: Icon(Icons.broken_image, color: Theme.of(context).colorScheme.primary,)
-                                  ),
-                                ),
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.all(12.0),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(event['title'], maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      DateFormat('d MMM y, h:mm a').format(
-                                        DateTime.parse(event['start_datetime']).toLocal()
-                                      ),
-                                      style: TextStyle(
-                                        color: Theme.of(context).colorScheme.primary, 
-                                        fontWeight: FontWeight.bold, 
-                                        fontSize: 12
-                                      ),
-                                    )
-                                  ],
-                                ),
-                              )
-                            ],
-                          ),
+                        return UniversalCard(
+                          data: event, 
+                          onTap: () {
+                            Navigator.push(context, MaterialPageRoute(builder: (_) => EventDetailScreen(event: event)));
+                          }
                         );
                       },
                     );
@@ -237,34 +209,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     itemCount: items.length,
                     itemBuilder: (context, index) {
                       final item = items[index];
-                      return Container(
-                        decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(12)),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: CachedNetworkImage(
-                                imageUrl: item['image_url'] ?? '',
-                                fadeInDuration: Duration.zero,
-                                fadeOutDuration: Duration.zero,
-                                fit: BoxFit.cover,
-                                width: double.infinity,
-                                placeholder: (context, url) => Container(color: Theme.of(context).colorScheme.surfaceContainerHighest,),
-                                errorWidget: (context, url, error) => Icon(Icons.store, color: Theme.of(context).colorScheme.primary),
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.all(8.0),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(item['title'], maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
-                                  Text("RM ${item['price']}", style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.bold)),
-                                ],
-                              ),
-                            )
-                          ],
-                        ),
+                      return UniversalCard(
+                        data: item, 
+                        onTap: () {
+                          Navigator.push(context, MaterialPageRoute(builder: (_) => EventDetailScreen(event: item)));
+                        }
                       );
                     },
                   );

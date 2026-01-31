@@ -52,6 +52,7 @@ class EventsCubit extends Cubit<EventsState> {
     emit(state.copyWith(isLoading: true));
 
     final cachedData = await DatabaseHelper.instance.getCachedEvents();
+    final nowStr = DateTime.now().toUtc().toIso8601String();
     
     if (cachedData.isNotEmpty) {
       final filtered = _applyFilters(cachedData, state.selectedTag, state.searchQuery);
@@ -66,6 +67,7 @@ class EventsCubit extends Cubit<EventsState> {
     _subscription = _supabase
         .from('events')
         .stream(primaryKey: ['id'])
+        .gte('end_datetime', nowStr) // Only show future events
         .order('start_datetime')
         .listen((data) async {
           final items = List<Map<String, dynamic>>.from(data);

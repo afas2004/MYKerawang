@@ -149,6 +149,72 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               
               const Divider(height: 40),
+
+              // --- THEME PREVIEW CARD ---
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("Preview", style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).cardColor,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.1)),
+                        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
+                      ),
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              // Fake Avatar
+                              CircleAvatar(
+                                backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                                child: Icon(Icons.person, color: Theme.of(context).colorScheme.onPrimaryContainer),
+                              ),
+                              const SizedBox(width: 12),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text("John Doe", style: TextStyle(fontWeight: FontWeight.bold)),
+                                  Text("UiTM Student", style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                                ],
+                              ),
+                              const Spacer(),
+                              // Fake "Follow" Button
+                              ElevatedButton(
+                                onPressed: () {},
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Theme.of(context).colorScheme.primary,
+                                  foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                                  minimumSize: const Size(60, 30),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                                ),
+                                child: const Text("Follow"),
+                              )
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          // Fake Tag
+                          Row(
+                            children: [
+                              Chip(
+                                label: const Text("Active"), 
+                                backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
+                                labelStyle: TextStyle(color: Theme.of(context).colorScheme.onSecondaryContainer, fontSize: 12),
+                                side: BorderSide.none,
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               // --- COLOR PICKER ---
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),

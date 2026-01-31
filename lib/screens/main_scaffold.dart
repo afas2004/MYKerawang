@@ -4,6 +4,7 @@ import 'marketplace_screen.dart';
 import 'create_listing_screen.dart';
 import 'events_screen.dart';
 import 'profile_screen.dart';
+import 'search_screen.dart';
 
 class MainScaffold extends StatefulWidget {
   const MainScaffold({super.key});
@@ -24,6 +25,7 @@ class _MainScaffoldState extends State<MainScaffold> {
 
   List<Widget> get _pages => [
     HomeScreen(onTabChange: _switchTab),
+    const SearchScreen(), // Search Tab
     const MarketplaceScreen(), // The full list
     const EventsScreen(), // Events Tab
     const ProfileScreen(), // Profile Tab
@@ -68,6 +70,12 @@ class _MainScaffoldState extends State<MainScaffold> {
                 color: Theme.of(context).colorScheme.onSecondaryContainer,
               ),
               label: 'Home',
+            ),
+            // 2. NEW SEARCH TAB
+            NavigationDestination(
+              icon: Icon(Icons.search),
+              selectedIcon: Icon(Icons.search, weight: 700), // Thicker icon when selected
+              label: 'Search',
             ),
             NavigationDestination(
               icon: Icon(

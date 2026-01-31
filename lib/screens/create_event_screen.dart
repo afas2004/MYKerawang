@@ -2,10 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
-// Ensure this exists
 
 class CreateEventScreen extends StatefulWidget {
-  final Map<String, dynamic>? eventToEdit; // NEW: Event to edit
+  final Map<String, dynamic>? eventToEdit; 
 
   const CreateEventScreen({super.key, this.eventToEdit});
 
@@ -17,7 +16,10 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
   late TextEditingController _titleController;
   late TextEditingController _locationController;
   late TextEditingController _descController;
-  DateTime? _selectedDate;
+  
+  DateTime? _startDate;
+  DateTime? _endDate; // NEW: Added End Date
+  
   File? _imageFile;
   String? _existingImageUrl;
   bool _isLoading = false;
@@ -25,9 +27,6 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
   
   final List<String> _availableTags = ['Academic', 'Tech', 'Food', 'Fun', 'Sports', 'Workshop', 'Arts'];
   List<String> _selectedTags = [];
-
-  final primaryColor = const Color(0xFF00A7C7);
-  final bgColor = const Color(0xFFF8F9FA);
 
   @override
   void initState() {
@@ -39,7 +38,12 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
     _descController = TextEditingController(text: event?['description'] ?? '');
     
     if (event != null) {
-      _selectedDate = DateTime.parse(event['start_datetime']);
+      _startDate = DateTime.parse(event['start_datetime']).toLocal();
+      // Load End Date or default to Start + 2 hours
+      _endDate = event['end_datetime'] != null 
+          ? DateTime.parse(event['end_datetime']).toLocal() 
+          : _startDate!.add(const Duration(hours: 2));
+          
       _existingImageUrl = event['image_url'];
       _isPublic = event['is_public'] ?? true;
       if (event['tags'] != null) {
@@ -48,23 +52,61 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
     }
   }
 
-  Future<void> _pickDate() async {
+  // Unified Date Picker Logic
+  Future<void> _pickDateTime(bool isStart) async {
     final now = DateTime.now();
-    final initial = _selectedDate ?? now;
-    final picked = await showDatePicker(
+    final initialDate = isStart 
+        ? (_startDate ?? now) 
+        : (_endDate ?? _startDate ?? now);
+        
+    final pickedDate = await showDatePicker(
       context: context, 
-      firstDate: now, // Allow past dates if editing old event
+      firstDate: now.subtract(const Duration(days: 1)), // Allow slightly past for editing
       lastDate: now.add(const Duration(days: 365)),
-      initialDate: initial,
+      initialDate: initialDate,
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: Theme.of(context).colorScheme, // Use App Theme
+          ),
+          child: child!,
+        );
+      }
     );
-    if (picked != null) {
-      if (mounted) {
-        final time = await showTimePicker(context: context, initialTime: TimeOfDay.fromDateTime(initial));
-        if (time != null) {
-          setState(() {
-            _selectedDate = DateTime(picked.year, picked.month, picked.day, time.hour, time.minute);
-          });
-        }
+
+    if (pickedDate != null && mounted) {
+      final pickedTime = await showTimePicker(
+        context: context, 
+        initialTime: TimeOfDay.fromDateTime(initialDate)
+      );
+      
+      if (pickedTime != null) {
+        final finalDateTime = DateTime(
+          pickedDate.year, pickedDate.month, pickedDate.day, 
+          pickedTime.hour, pickedTime.minute
+        );
+
+        setState(() {
+          if (isStart) {
+            _startDate = finalDateTime;
+            // Smart UX: If End Date is missing or before Start Date, auto-fix it
+            if (_endDate == null || _endDate!.isBefore(_startDate!)) {
+              _endDate = _startDate!.add(const Duration(hours: 2));
+            }
+          } else {
+            // Validation: End Date cannot be before Start Date
+            if (_startDate != null && finalDateTime.isBefore(_startDate!)) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: const Text('End time cannot be before Start time'),
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                )
+              );
+              return;
+            }
+            _endDate = finalDateTime;
+          }
+        });
       }
     }
   }
@@ -84,16 +126,17 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
   void _showImageOptions() {
     showModalBottomSheet(
       context: context,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       builder: (_) => SafeArea(
         child: Wrap(
           children: [
             ListTile(
-              leading: const Icon(Icons.photo_camera),
+              leading: Icon(Icons.photo_camera, color: Theme.of(context).colorScheme.primary),
               title: const Text('Take Photo'),
               onTap: () { Navigator.pop(context); _pickImage(ImageSource.camera); },
             ),
             ListTile(
-              leading: const Icon(Icons.photo_library),
+              leading: Icon(Icons.photo_library, color: Theme.of(context).colorScheme.primary),
               title: const Text('Choose from Gallery'),
               onTap: () { Navigator.pop(context); _pickImage(ImageSource.gallery); },
             ),
@@ -104,16 +147,18 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
   }
 
   Future<void> _submit() async {
-    if (_titleController.text.isEmpty || _selectedDate == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please fill title and date')));
+    if (_titleController.text.isEmpty || _startDate == null || _endDate == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Please fill title and dates'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        )
+      );
       return;
     }
     
     final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('You must be logged in.')));
-      return;
-    }
+    if (user == null) return;
 
     setState(() => _isLoading = true);
 
@@ -122,9 +167,9 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
       String? imageUrl = _existingImageUrl;
       
       if (_imageFile != null) {
+        // Simple compression by extension (Use standard jpg/png)
         final fileExt = _imageFile!.path.split('.').last;
         final path = 'events/${DateTime.now().millisecondsSinceEpoch}.$fileExt';
-        
         await supabase.storage.from('images').upload(path, _imageFile!);
         imageUrl = supabase.storage.from('images').getPublicUrl(path);
       }
@@ -133,7 +178,11 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
         'title': _titleController.text,
         'location': _locationController.text,
         'description': _descController.text,
-        'start_datetime': _selectedDate!.toIso8601String(),
+        
+        // SAVE UTC DATES
+        'start_datetime': _startDate!.toUtc().toIso8601String(),
+        'end_datetime': _endDate!.toUtc().toIso8601String(),
+        
         'image_url': imageUrl,
         'is_public': _isPublic,
         'tags': _selectedTags,
@@ -141,21 +190,25 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
       };
 
       if (widget.eventToEdit != null) {
-        // UPDATE
         await supabase.from('events').update(data).eq('id', widget.eventToEdit!['id']);
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Event Updated!')));
       } else {
-        // INSERT
         await supabase.from('events').insert(data);
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Event Published!')));
       }
 
       if (mounted) {
-        Navigator.pop(context, true); // Return true to refresh
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(widget.eventToEdit != null ? 'Event Updated!' : 'Event Published!'),
+            backgroundColor: Colors.green,
+          )
+        );
+        Navigator.pop(context, true); 
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Theme.of(context).colorScheme.error)
+        );
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -165,14 +218,18 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
   @override
   Widget build(BuildContext context) {
     final isEditing = widget.eventToEdit != null;
+    final theme = Theme.of(context); // Cache theme for cleaner code
 
     return Scaffold(
-      backgroundColor: bgColor,
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
         title: Text(isEditing ? 'Edit Event' : 'Create New Event'),
-        backgroundColor: bgColor,
+        backgroundColor: theme.scaffoldBackgroundColor,
         elevation: 0,
-        bottom: PreferredSize(preferredSize: const Size.fromHeight(1), child: Divider(height: 1, color: Colors.grey[200])),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1), 
+          child: Divider(height: 1, color: theme.dividerColor.withOpacity(0.1))
+        ),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -182,15 +239,53 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
             _label("Event Title"),
             _input(_titleController, "Enter a catchy title"),
             
-            _label("Date & Time"),
-            GestureDetector(
-              onTap: _pickDate,
-              child: AbsorbPointer(
-                child: _input(TextEditingController(text: _selectedDate?.toLocal().toString().split('.')[0] ?? ''), "Select date", icon: Icons.calendar_today),
+            // --- DATE ROW (START & END) ---
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _label("Starts", topPad: 0),
+                        GestureDetector(
+                          onTap: () => _pickDateTime(true),
+                          child: AbsorbPointer(
+                            child: _input(
+                              TextEditingController(text: _formatDate(_startDate)), 
+                              "Select Start", 
+                              icon: Icons.calendar_today
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _label("Ends", topPad: 0),
+                        GestureDetector(
+                          onTap: () => _pickDateTime(false),
+                          child: AbsorbPointer(
+                            child: _input(
+                              TextEditingController(text: _formatDate(_endDate)), 
+                              "Select End", 
+                              icon: Icons.event_busy
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
             
-            _label("Location"),
+            _label("Location", topPad: 0),
             _input(_locationController, "e.g. Dewan Aspirasi"),
 
             _label("Tags"),
@@ -203,16 +298,19 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
                   selected: isSelected,
                   onSelected: (bool selected) {
                     setState(() {
-                      if (selected) {
-                        _selectedTags.add(tag);
-                      } else {
-                        _selectedTags.remove(tag);
-                      }
+                      selected ? _selectedTags.add(tag) : _selectedTags.remove(tag);
                     });
                   },
-                  selectedColor: primaryColor.withOpacity(0.2),
-                  checkmarkColor: primaryColor,
-                  backgroundColor: Colors.white,
+                  // Dynamic Colors
+                  selectedColor: theme.colorScheme.secondaryContainer,
+                  checkmarkColor: theme.colorScheme.onSecondaryContainer,
+                  backgroundColor: theme.colorScheme.surfaceContainer,
+                  labelStyle: TextStyle(
+                    color: isSelected 
+                      ? theme.colorScheme.onSecondaryContainer 
+                      : theme.colorScheme.onSurface,
+                  ),
+                  side: BorderSide.none,
                 );
               }).toList(),
             ),
@@ -222,27 +320,21 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
             TextField(
               controller: _descController,
               maxLines: 4,
-              decoration: _inputDeco("Tell us more..."),
+              decoration: _inputDeco("Tell us more...", theme),
             ),
 
             const SizedBox(height: 20),
             
             _label("Event Media"),
             GestureDetector(
-              onTap: () {
-                if (_imageFile == null && _existingImageUrl == null) {
-                  _showImageOptions();
-                } else {
-                   _showImageOptions();
-                }
-              },
+              onTap: () => _showImageOptions(),
               child: Container(
                 height: 180,
                 width: double.infinity,
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: theme.colorScheme.surfaceContainer,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey.shade300, style: BorderStyle.solid),
+                  border: Border.all(color: theme.dividerColor.withOpacity(0.2)),
                   image: _imageFile != null 
                       ? DecorationImage(image: FileImage(_imageFile!), fit: BoxFit.cover)
                       : (_existingImageUrl != null 
@@ -253,9 +345,9 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
                     ? Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.add_a_photo, color: primaryColor, size: 40),
+                          Icon(Icons.add_a_photo, color: theme.colorScheme.primary, size: 40),
                           const SizedBox(height: 8),
-                          Text("Add Event Photo", style: TextStyle(color: primaryColor, fontWeight: FontWeight.bold)),
+                          Text("Add Event Photo", style: TextStyle(color: theme.colorScheme.primary, fontWeight: FontWeight.bold)),
                         ],
                       )
                     : null,
@@ -266,27 +358,33 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
             _label("Privacy"),
             SwitchListTile(
               title: const Text("Public Event"),
-              subtitle: const Text("Visible to everyone"),
+              subtitle: Text("Visible to everyone", style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
               value: _isPublic,
-              activeThumbColor: primaryColor,
+              activeThumbColor: theme.colorScheme.primary,
               onChanged: (val) => setState(() => _isPublic = val),
             ),
+            const SizedBox(height: 80), // Bottom padding for FAB/Button
           ],
         ),
       ),
       bottomNavigationBar: Container(
         padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(color: bgColor, border: Border(top: BorderSide(color: Colors.grey.shade200))),
+        decoration: BoxDecoration(
+          color: theme.scaffoldBackgroundColor, 
+          border: Border(top: BorderSide(color: theme.dividerColor.withOpacity(0.1)))
+        ),
         child: Row(
           children: [
             Expanded(
               child: ElevatedButton.icon(
                 onPressed: _isLoading ? null : _submit,
-                icon: const Icon(Icons.publish),
-                label: Text(isEditing ? "Save Changes" : "Publish"),
+                icon: _isLoading 
+                    ? SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: theme.colorScheme.onPrimary))
+                    : const Icon(Icons.publish),
+                label: Text(_isLoading ? "Processing..." : (isEditing ? "Save Changes" : "Publish Event")),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: primaryColor,
-                  foregroundColor: Colors.white,
+                  backgroundColor: theme.colorScheme.primary,
+                  foregroundColor: theme.colorScheme.onPrimary,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
@@ -298,23 +396,39 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
     );
   }
 
-  Widget _label(String text) => Padding(padding: const EdgeInsets.only(bottom: 8, top: 16), child: Text(text, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)));
+  String _formatDate(DateTime? date) {
+    if (date == null) return '';
+    return "${date.day}/${date.month} ${date.hour.toString().padLeft(2,'0')}:${date.minute.toString().padLeft(2,'0')}";
+  }
+
+  Widget _label(String text, {double topPad = 16}) => Padding(
+    padding: EdgeInsets.only(bottom: 8, top: topPad), 
+    child: Text(text, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16))
+  );
   
   Widget _input(TextEditingController ctrl, String hint, {IconData? icon}) {
     return TextField(
       controller: ctrl,
-      decoration: _inputDeco(hint, icon: icon),
+      decoration: _inputDeco(hint, Theme.of(context), icon: icon),
+      readOnly: icon != null, // Make read-only if it has an icon (implies picker)
     );
   }
 
-  InputDecoration _inputDeco(String hint, {IconData? icon}) {
+  InputDecoration _inputDeco(String hint, ThemeData theme, {IconData? icon}) {
     return InputDecoration(
       hintText: hint,
-      suffixIcon: icon != null ? Icon(icon, color: Colors.grey) : null,
+      suffixIcon: icon != null ? Icon(icon, color: theme.colorScheme.onSurfaceVariant) : null,
       filled: true,
-      fillColor: Colors.white,
-      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade300)),
-      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: primaryColor)),
+      // Adaptive Background Color
+      fillColor: theme.colorScheme.surfaceContainer, 
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12), 
+        borderSide: BorderSide(color: theme.dividerColor.withOpacity(0.1))
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12), 
+        borderSide: BorderSide(color: theme.colorScheme.primary)
+      ),
     );
   }
 }
