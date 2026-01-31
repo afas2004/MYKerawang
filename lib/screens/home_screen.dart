@@ -1,15 +1,19 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
-import 'package:mykerawang/screens/event_detail_screen.dart';
-import 'package:mykerawang/screens/events_screen.dart';
-import 'package:mykerawang/screens/marketplace_screen.dart';
-import 'package:mykerawang/widgets/universal_card.dart';
+import 'package:mykerawang/screens/create_event_screen.dart';
+import 'package:mykerawang/screens/create_listing_screen.dart';
+import 'package:mykerawang/screens/post_detail_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import 'notifications_screen.dart';
+import '../widgets/universal_card.dart';
+import '../widgets/post_card.dart';
+import 'event_detail_screen.dart';
+import 'item_detail_screen.dart';
+import 'settings_screen.dart';
+import 'notification_screen.dart'; // We will create this next
+import 'create_post_screen.dart'; // We will create this next
 
 class HomeScreen extends StatefulWidget {
   final Function(int) onTabChange;
+
   const HomeScreen({super.key, required this.onTabChange});
 
   @override
@@ -17,210 +21,237 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  // Store the "Futures" so they don't reload on rebuilds
-  late Future<List<dynamic>> _eventsFuture;
-  late Future<List<dynamic>> _listingsFuture;
-  late Future<Map<String, dynamic>?> _profileFuture;
+  final _supabase = Supabase.instance.client;
+  
+  bool _isLoading = true;
+  List<dynamic> _socialFeed = []; 
+  List<dynamic> _featuredEvents = []; 
+  List<dynamic> _freshMarketItems = []; // New Horizontal Section
 
   @override
   void initState() {
     super.initState();
-    final supabase = Supabase.instance.client;
-  
-    // 1. FILTER PAST EVENTS
-    // "gte" means Greater Than or Equal to.
-    // We compare 'end_datetime' to the current time (ISO string).
-    final nowStr = DateTime.now().toUtc().toIso8601String();
-
-    _eventsFuture = supabase
-        .from('events')
-        .select()
-       .gte('end_datetime', nowStr) // <--- THIS LINE FIXES THE BUG
-        .order('start_datetime', ascending: true)
-        .limit(5);
-
-    _listingsFuture = supabase.from('listings').select().limit(5);
-    _profileFuture = _fetchUserProfile(supabase);
+    _fetchFeedData();
   }
 
-  // Helper to keep code clean
-  static Future<Map<String, dynamic>?> _fetchUserProfile(SupabaseClient supabase) async {
-     try {
-       final user = supabase.auth.currentUser;
-       if (user == null) return null;
-       return await supabase.from('profiles').select().eq('id', user.id).single();
-     } catch (e) { return null; }
+  Future<void> _fetchFeedData() async {
+    try {
+      final now = DateTime.now().toIso8601String();
+
+      // 1. Fetch Events (Carousel)
+      final events = await _supabase.from('events')
+          .select()
+          .gt('end_datetime', now)
+          .order('start_datetime', ascending: true)
+          .limit(8);
+      
+      // 2. Fetch Listings (Horizontal Scroll)
+      final listings = await _supabase.from('listings')
+          .select()
+          .eq('is_sold', false)
+          .order('created_at', ascending: false)
+          .limit(8);
+
+      // 3. Fetch Posts (Vertical Feed)
+      // We also mix in a few events/listings into the feed for variety
+      final posts = await _supabase.from('posts')
+          .select()
+          .order('created_at', ascending: false)
+          .limit(20);
+
+      final List<dynamic> mixedFeed = [];
+      for (var p in posts) { mixedFeed.add({...p, 'type': 'post'}); }
+      
+      // Shuffle 2 random events into the feed just for fun
+      if (events.length > 2) {
+        mixedFeed.insert(2, {...events[2], 'type': 'event'});
+      }
+
+      if (mounted) {
+        setState(() {
+          _featuredEvents = events;
+          _freshMarketItems = listings;
+          _socialFeed = mixedFeed;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint("Error fetching feed: $e");
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-
     return Scaffold(
-      body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Top Bar (Welcome + Notifs)
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  children: [
-                    FutureBuilder(
-                      future: _profileFuture,
-                      builder: (context, snapshot) {
-                        final profileData = snapshot.data;
-                        final avatarUrl = profileData?['avatar_url'] as String?;
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      // FAB for "Functional" Creation
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _showCreateOptions(context),
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        child: Icon(Icons.add, color: Theme.of(context).colorScheme.onPrimary),
+      ),
+      body: CustomScrollView(
+        slivers: [
+          // 1. APP BAR
+          SliverAppBar(
+            floating: true,
+            snap: true,
+            title: const Text("MYKerawang", style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+            centerTitle: false,
+            actions: [
+              // Notification Bell (Working)
+              IconButton(
+                icon: const Icon(Icons.notifications_outlined),
+                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationScreen())),
+              ),
+              // Settings Icon (Replaces Avatar)
+              IconButton(
+                icon: const Icon(Icons.settings_outlined),
+                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen())),
+              ),
+              const SizedBox(width: 8),
+            ],
+          ),
 
+          // 2. EVENTS CAROUSEL (Horizontal)
+          if (!_isLoading && _featuredEvents.isNotEmpty)
+            SliverToBoxAdapter(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _sectionHeader("Happening Soon", () => widget.onTabChange(3)), // Jump to Events Tab
+                  SizedBox(
+                    height: 280, // INCREASED HEIGHT (Fixes Overflow)
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      itemCount: _featuredEvents.length,
+                      itemBuilder: (context, index) {
                         return Container(
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                          ),
-                          child: ClipOval(
-                            child: avatarUrl != null
-                                ? CachedNetworkImage(
-                                    imageUrl: avatarUrl,
-                                    fadeInDuration: Duration.zero,
-                                    fadeOutDuration: Duration.zero,
-                                    fit: BoxFit.cover,
-                                    // Show spinner while loading
-                                    placeholder: (context, url) => const Padding(
-                                      padding: EdgeInsets.all(12.0),
-                                      child: CircularProgressIndicator(strokeWidth: 2),
-                                    ),
-                                    // Show Person Icon if URL fails (Safe Fallback)
-                                    errorWidget: (context, url, error) => Icon(Icons.person, color: Theme.of(context).colorScheme.primary),
-                                  )
-                                // Show Person Icon if URL is null
-                                : Icon(Icons.person, color: Theme.of(context).colorScheme.primary),
+                          width: 260,
+                          margin: const EdgeInsets.only(right: 12, bottom: 10),
+                          child: UniversalCard(
+                            data: _featuredEvents[index], 
+                            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => EventDetailScreen(event: _featuredEvents[index]))),
                           ),
                         );
                       },
                     ),
-                    const SizedBox(width: 12),
-                    FutureBuilder(
-                      future: _profileFuture,
-                      builder: (context, snapshot) {
-                        final fullName = (snapshot.data as Map<String, dynamic>?)?['full_name'] as String? ?? 'User';
-                        return Text('Welcome, $fullName!', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold));
+                  ),
+                ],
+              ),
+            ),
+
+          // 3. MARKETPLACE CAROUSEL (New Horizontal Section)
+          if (!_isLoading && _freshMarketItems.isNotEmpty)
+            SliverToBoxAdapter(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _sectionHeader("Fresh Finds", () => widget.onTabChange(2)), // Jump to Market Tab
+                  SizedBox(
+                    height: 280, 
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      itemCount: _freshMarketItems.length,
+                      itemBuilder: (context, index) {
+                        return Container(
+                          width: 200, // Slightly smaller cards for items
+                          margin: const EdgeInsets.only(right: 12, bottom: 10),
+                          child: UniversalCard(
+                            data: _freshMarketItems[index], 
+                            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ItemDetailScreen(item: _freshMarketItems[index]))),
+                          ),
+                        );
                       },
                     ),
-                    const Spacer(),
-                    Stack(
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.notifications_outlined), 
-                          onPressed: () {
-                            Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationsScreen()));
-                          }
+                  ),
+                  const Divider(thickness: 8, height: 24), // Thick separator
+                ],
+              ),
+            ),
+
+          // 4. SOCIAL FEED (Vertical)
+          _isLoading 
+            ? const SliverFillRemaining(child: Center(child: CircularProgressIndicator()))
+            : SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    final item = _socialFeed[index];
+                    if (item['type'] == 'event') {
+                      return Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: UniversalCard(
+                          data: item, 
+                          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => EventDetailScreen(event: item)))
                         ),
-                        Positioned(right: 8, top: 8, child: Container(padding: const EdgeInsets.all(4), decoration: const BoxDecoration(color: Colors.amber, shape: BoxShape.circle), child: const Text('3', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold))))
-                      ],
-                    )
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 24),
-              
-              // Happening Soon Header
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text("Happening Soon", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                    TextButton(
-                      onPressed: () {
-                        widget.onTabChange(2); // Switch to Events tab
-                      }, 
-                      child: const Text("See All")
-                    ),
-                  ],
-                ),
-              ),
-              
-              const SizedBox(height: 12),
-
-              // Events Horizontal List
-              SizedBox(
-                height: 240,
-                child: FutureBuilder(
-                  future: _eventsFuture,
-                  builder: (context, snapshot) {
-                    if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-                    final events = snapshot.data as List;
-                    
-                    return ListView.separated(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      scrollDirection: Axis.horizontal,
-                      itemCount: events.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 16),
-                      itemBuilder: (context, index) {
-                        final event = events[index];
-                        return UniversalCard(
-                          data: event, 
-                          onTap: () {
-                            Navigator.push(context, MaterialPageRoute(builder: (_) => EventDetailScreen(event: event)));
-                          }
+                      );
+                    }
+                    return PostCard(
+                      post: item,
+                      onTap: () {
+                         Navigator.push(
+                          context, 
+                          MaterialPageRoute(builder: (_) => PostDetailScreen(post: item))
                         );
                       },
                     );
                   },
+                  childCount: _socialFeed.length,
                 ),
               ),
+        ],
+      ),
+    );
+  }
 
-              const SizedBox(height: 24),
+  Widget _sectionHeader(String title, VoidCallback onSeeAll) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          TextButton(onPressed: onSeeAll, child: const Text("See All")),
+        ],
+      ),
+    );
+  }
 
-              // Marketplace Header
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text("New in Marketplace", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                    TextButton(onPressed: () {
-                      widget.onTabChange(1); // Switch to Marketplace tab
-                    }, child: const Text("See All"))
-                  ],
-                ),
-              ),
-
-              // Marketplace Grid (Replicating the 2-column grid in home.html)
-              FutureBuilder(
-                future: _listingsFuture,
-                builder: (context, snapshot) {
-                  if (!snapshot.hasData) return const SizedBox();
-                  final items = snapshot.data as List;
-                  
-                  return GridView.builder(
-                    padding: const EdgeInsets.all(16),
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      childAspectRatio: 0.75,
-                      crossAxisSpacing: 16,
-                      mainAxisSpacing: 16,
-                    ),
-                    itemCount: items.length,
-                    itemBuilder: (context, index) {
-                      final item = items[index];
-                      return UniversalCard(
-                        data: item, 
-                        onTap: () {
-                          Navigator.push(context, MaterialPageRoute(builder: (_) => EventDetailScreen(event: item)));
-                        }
-                      );
-                    },
-                  );
-                },
-              ),
-            ],
-          ),
+  void _showCreateOptions(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.chat_bubble_outline),
+              title: const Text('Create Post'),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const CreatePostScreen()));
+              }
+            ),
+            ListTile(
+              leading: const Icon(Icons.calendar_today),
+              title: const Text('Host Event'),
+              onTap: () {
+                Navigator.pop(ctx);
+                // We assume CreateEventScreen is already imported
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateEventScreen()));
+              }
+            ),
+            ListTile(
+              leading: const Icon(Icons.storefront),
+              title: const Text('Sell Item'),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateListingScreen()));
+              }
+            ),
+          ],
         ),
       ),
     );

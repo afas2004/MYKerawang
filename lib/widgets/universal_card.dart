@@ -1,49 +1,40 @@
-import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 class UniversalCard extends StatelessWidget {
   final Map<String, dynamic> data;
   final VoidCallback onTap;
-  
-  // Logic: If it has 'price', it's a listing. If it has 'start_datetime', it's an event.
-  // We can pass a manual 'isEvent' override if needed, but auto-detection usually works.
-  const UniversalCard({
-    super.key, 
-    required this.data, 
-    required this.onTap,
-  });
+
+  const UniversalCard({super.key, required this.data, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    final bool isListing = data.containsKey('price');
+    final theme = Theme.of(context);
     final title = data['title'] ?? 'No Title';
-    final image = data['image_url'] ?? '';
+    final image = data['image_url'];
     
-    // Formatted Subtitle logic
-    String badgeText = '';
-    Color badgeColor = Theme.of(context).colorScheme.primary;
+    // Determine subtitle based on type (Event date vs Price)
+    String subtitle = '';
+    bool isEvent = data.containsKey('start_datetime');
     
-    if (isListing) {
-      badgeText = "RM ${(data['price'] as num).toStringAsFixed(2)}";
-      badgeColor = Colors.orange; // Money is usually Gold/Orange
+    if (isEvent) {
+      final date = DateTime.parse(data['start_datetime']);
+      subtitle = DateFormat('d MMM, h:mm a').format(date);
     } else {
-      if (data['start_datetime'] != null) {
-        final date = DateTime.parse(data['start_datetime']).toLocal();
-        badgeText = DateFormat('d MMM').format(date); // e.g. "14 Jan"
-      } else {
-        badgeText = "Event";
-      }
+      // Marketplace item
+      double price = (data['price'] ?? 0).toDouble();
+      subtitle = "RM ${price.toStringAsFixed(2)}";
     }
 
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 160, // Standard width for horizontal lists
+        // REMOVED: height property (Let content decide height)
         decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainer, // Dark Mode Safe
+          color: theme.cardColor,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.1)),
+          border: Border.all(color: theme.dividerColor.withOpacity(0.1)),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.05),
@@ -54,66 +45,78 @@ class UniversalCard extends StatelessWidget {
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min, // <--- CRITICAL: Shrink-wraps the card
           children: [
-            // --- IMAGE SECTION ---
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  ClipRRect(
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                    child: CachedNetworkImage(
-                      imageUrl: image,
-                      fit: BoxFit.cover,
-                      fadeInDuration: Duration.zero, // No flicker
-                      placeholder: (context, url) => Container(color: Theme.of(context).colorScheme.surfaceContainerHighest),
-                      errorWidget: (context, url, error) => const Icon(Icons.broken_image, color: Colors.grey),
-                    ),
-                  ),
-                  // --- BADGE (Price or Date) ---
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.7),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        badgeText,
-                        style: TextStyle(
-                          color: isListing ? Colors.orangeAccent : Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
+            // 1. IMAGE SECTION
+            // FIX: Replaced 'Expanded' with 'AspectRatio' or 'SizedBox'
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+              child: SizedBox(
+                height: 150, // <--- FIXED HEIGHT for Image
+                width: double.infinity,
+                child: image != null
+                    ? CachedNetworkImage(
+                        imageUrl: image,
+                        fit: BoxFit.cover,
+                        placeholder: (context, url) => Container(color: theme.colorScheme.surfaceContainerHighest),
+                        errorWidget: (context, url, error) => Container(
+                          color: theme.colorScheme.surfaceContainerHighest,
+                          child: const Icon(Icons.broken_image, color: Colors.grey),
+                        ),
+                      )
+                    : Container(
+                        color: theme.colorScheme.surfaceContainerHighest,
+                        child: Icon(
+                          isEvent ? Icons.event : Icons.store, 
+                          size: 40, 
+                          color: theme.colorScheme.onSurfaceVariant
                         ),
                       ),
-                    ),
-                  ),
-                ],
               ),
             ),
-            
-            // --- TEXT SECTION ---
+
+            // 2. TEXT SECTION
             Padding(
-              padding: const EdgeInsets.all(10.0),
+              padding: const EdgeInsets.all(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Badge (Event/Market)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: isEvent 
+                          ? theme.colorScheme.primaryContainer 
+                          : Colors.orange.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      isEvent ? 'EVENT' : 'MARKET',
+                      style: TextStyle(
+                        fontSize: 10, 
+                        fontWeight: FontWeight.bold,
+                        color: isEvent 
+                            ? theme.colorScheme.onPrimaryContainer 
+                            : Colors.orange,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  
                   Text(
                     title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                   ),
                   const SizedBox(height: 4),
+                  
                   Text(
-                    isListing ? (data['category'] ?? 'Item') : (data['location'] ?? 'UiTM'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    subtitle,
                     style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      fontSize: 12,
+                      color: theme.colorScheme.onSurfaceVariant, 
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500
                     ),
                   ),
                 ],
