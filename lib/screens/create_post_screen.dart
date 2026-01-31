@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class CreatePostScreen extends StatefulWidget {
-  const CreatePostScreen({super.key});
+  final Map<String, dynamic>? sharedEvent;
+
+  const CreatePostScreen({super.key, this.sharedEvent});
 
   @override
   State<CreatePostScreen> createState() => _CreatePostScreenState();
@@ -29,6 +31,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         'title': _titleCtrl.text,
         'body': _bodyCtrl.text,
         'is_anonymous': _isAnon,
+        'shared_event_id': widget.sharedEvent?['id'],
         'tags': _selectedTag != null ? [_selectedTag] : [],
       });
       if (mounted) Navigator.pop(context);

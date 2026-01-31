@@ -1,8 +1,7 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-import 'profile_cubit.dart'; // Ensure this matches the file name exactly
+import 'dart:io';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -13,108 +12,184 @@ class EditProfileScreen extends StatefulWidget {
 
 class _EditProfileScreenState extends State<EditProfileScreen> {
   final _nameCtrl = TextEditingController();
-  final _phoneCtrl = TextEditingController();
   final _bioCtrl = TextEditingController();
-  File? _pickedImage; 
+  final _websiteCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController(); // <--- NEW CONTROLLER
+  
+  bool _isLoading = false;
+  File? _avatarFile;
+  File? _qrFile;
+  String? _currentAvatarUrl;
+  String? _currentQrUrl;
 
   @override
   void initState() {
     super.initState();
-    _populateFields();
+    _loadData();
   }
 
-  void _populateFields() {
-    // Check if context is valid and state exists
-    final state = context.read<ProfileCubit>().state;
-    if (state.profile != null) {
-      _nameCtrl.text = state.profile!['full_name'] ?? '';
-      _phoneCtrl.text = state.profile!['phone_number'] ?? '';
-      _bioCtrl.text = state.profile!['bio'] ?? '';
-    }
-  }
+  Future<void> _loadData() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
 
-  Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
-
-    if (pickedFile != null) {
-      setState(() => _pickedImage = File(pickedFile.path));
-      
-      if (mounted) {
-         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Uploading image...")));
-         await context.read<ProfileCubit>().uploadAvatar(_pickedImage!);
-      }
-    }
-  }
-
-  Future<void> _saveProfile() async {
-    await context.read<ProfileCubit>().updateProfile(
-      fullName: _nameCtrl.text,
-      phone: _phoneCtrl.text,
-      bio: _bioCtrl.text,
-    );
+    final data = await Supabase.instance.client.from('profiles').select().eq('id', user.id).single();
     
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Profile Updated')));
-      Navigator.pop(context);
+    setState(() {
+      _nameCtrl.text = data['display_name'] ?? '';
+      _bioCtrl.text = data['bio'] ?? '';
+      _websiteCtrl.text = data['website'] ?? '';
+      _phoneCtrl.text = data['phone_number'] ?? ''; // <--- LOAD PHONE
+      _currentAvatarUrl = data['avatar_url'];
+      _currentQrUrl = data['payment_qr_url'];
+    });
+  }
+
+  Future<void> _pickImage(bool isAvatar) async {
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(source: ImageSource.gallery);
+    if (picked != null) {
+      setState(() {
+        if (isAvatar) {
+          _avatarFile = File(picked.path);
+        } else {
+          _qrFile = File(picked.path);
+        }
+      });
+    }
+  }
+
+  Future<void> _save() async {
+    setState(() => _isLoading = true);
+    final user = Supabase.instance.client.auth.currentUser;
+    final supabase = Supabase.instance.client;
+
+    try {
+      String? newAvatarUrl = _currentAvatarUrl;
+      String? newQrUrl = _currentQrUrl;
+
+      // 1. Upload Images (Avatar & QR)
+      if (_avatarFile != null) {
+        final path = 'avatars/${user!.id}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        await supabase.storage.from('images').upload(path, _avatarFile!);
+        newAvatarUrl = supabase.storage.from('images').getPublicUrl(path);
+      }
+      if (_qrFile != null) {
+        final uniquePath = 'qrs/${user!.id}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        await supabase.storage.from('images').upload(uniquePath, _qrFile!);
+        newQrUrl = supabase.storage.from('images').getPublicUrl(uniquePath);
+      }
+
+      // 2. Update Profile
+      await supabase.from('profiles').update({
+        'display_name': _nameCtrl.text,
+        'bio': _bioCtrl.text,
+        'website': _websiteCtrl.text,
+        'phone_number': _phoneCtrl.text, // <--- SAVE PHONE
+        'avatar_url': newAvatarUrl,
+        'payment_qr_url': newQrUrl,
+      }).eq('id', user!.id);
+
+      if (mounted) {
+        Navigator.pop(context, true); 
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile Updated!")));
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // Watch for specific changes
-    final isLoading = context.select((ProfileCubit c) => c.state.isLoading);
-    final profile = context.select((ProfileCubit c) => c.state.profile);
-
     return Scaffold(
-      appBar: AppBar(title: const Text("Edit Profile")),
-      body: SingleChildScrollView(
+      appBar: AppBar(
+        title: const Text("Edit Profile"),
+        actions: [
+          TextButton(
+            onPressed: _isLoading ? null : _save,
+            child: const Text("SAVE", style: TextStyle(fontWeight: FontWeight.bold)),
+          )
+        ],
+      ),
+      body: ListView(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Center(
-              child: Stack(
-                children: [
-                  CircleAvatar(
-                    radius: 60,
-                    backgroundColor: Colors.grey[200],
-                    backgroundImage: _pickedImage != null
-                        ? FileImage(_pickedImage!) as ImageProvider
-                        : NetworkImage(profile?['avatar_url'] ?? 'https://via.placeholder.com/150'),
-                  ),
-                  Positioned(
-                    bottom: 0,
-                    right: 0,
-                    child: GestureDetector(
-                      onTap: _pickImage,
-                      child: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: const BoxDecoration(color: Colors.purple, shape: BoxShape.circle),
-                        child: const Icon(Icons.camera_alt, color: Colors.white, size: 20),
-                      ),
-                    ),
-                  ),
-                ],
+        children: [
+          // Avatar Section
+          Center(
+            child: GestureDetector(
+              onTap: () => _pickImage(true),
+              child: CircleAvatar(
+                radius: 50,
+                backgroundImage: _avatarFile != null 
+                  ? FileImage(_avatarFile!) 
+                  : (_currentAvatarUrl != null ? NetworkImage(_currentAvatarUrl!) : null) as ImageProvider?,
+                child: _avatarFile == null && _currentAvatarUrl == null 
+                  ? const Icon(Icons.camera_alt, size: 30) 
+                  : null,
               ),
             ),
-            const SizedBox(height: 24),
-            TextField(controller: _nameCtrl, decoration: const InputDecoration(labelText: "Full Name")),
-            const SizedBox(height: 16),
-            TextField(controller: _phoneCtrl, decoration: const InputDecoration(labelText: "Phone Number")),
-            const SizedBox(height: 16),
-            TextField(controller: _bioCtrl, maxLines: 3, decoration: const InputDecoration(labelText: "Bio")),
-            const SizedBox(height: 24),
-            SizedBox(
+          ),
+          const SizedBox(height: 24),
+
+          // Basic Info
+          TextField(
+            controller: _nameCtrl,
+            decoration: const InputDecoration(labelText: "Display Name", border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _bioCtrl,
+            maxLines: 3,
+            decoration: const InputDecoration(labelText: "Bio", border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 16),
+          
+          // Contact Info
+          TextField(
+            controller: _phoneCtrl,
+            keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(
+              labelText: "WhatsApp Number", 
+              hintText: "e.g. 60123456789 (No + symbol)",
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.phone),
+            ),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _websiteCtrl,
+            decoration: const InputDecoration(labelText: "Website / Social Link", border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 24),
+
+          // Payment QR
+          const Text("DuitNow QR (For Selling)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 8),
+          GestureDetector(
+            onTap: () => _pickImage(false),
+            child: Container(
+              height: 200,
               width: double.infinity,
-              child: ElevatedButton(
-                onPressed: isLoading ? null : _saveProfile,
-                child: isLoading 
-                  ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator()) 
-                  : const Text("Save Changes"),
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey),
+                borderRadius: BorderRadius.circular(12),
+                image: _qrFile != null 
+                    ? DecorationImage(image: FileImage(_qrFile!), fit: BoxFit.cover)
+                    : (_currentQrUrl != null ? DecorationImage(image: NetworkImage(_currentQrUrl!), fit: BoxFit.cover) : null),
               ),
+              child: (_qrFile == null && _currentQrUrl == null)
+                  ? const Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.qr_code, size: 40, color: Colors.grey),
+                        Text("Upload QR Code Image"),
+                      ],
+                    )
+                  : null,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

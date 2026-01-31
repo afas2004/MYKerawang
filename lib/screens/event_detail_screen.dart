@@ -1,345 +1,323 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'create_event_screen.dart';
-import '../screens/profile_cubit.dart'; // Ensure this path is correct
+import 'package:url_launcher/url_launcher.dart';
+import 'package:timeago/timeago.dart' as timeago;
+import 'profile_screen.dart';
+import 'create_post_screen.dart'; // To share event to feed
+import 'image_preview_screen.dart'; // Ensure you have this file
 
 class EventDetailScreen extends StatefulWidget {
   final Map<String, dynamic> event;
-  final bool isOwnerOverride; // Optional: Force owner view if coming from Profile
 
-  const EventDetailScreen({
-    super.key, 
-    required this.event, 
-    this.isOwnerOverride = false
-  });
+  const EventDetailScreen({super.key, required this.event});
 
   @override
   State<EventDetailScreen> createState() => _EventDetailScreenState();
 }
 
 class _EventDetailScreenState extends State<EventDetailScreen> {
-  final _supabase = Supabase.instance.client;
-  late Map<String, dynamic> _eventData;
-  Map<String, dynamic>? _organizerProfile;
+  late Map<String, dynamic> _event;
+  Map<String, dynamic>? _organizer;
   bool _isLoading = true;
-  bool _isJoined = false;
-  int _attendeeCount = 0;
+  final _commentCtrl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _eventData = widget.event;
-    _fetchDetails();
+    _event = widget.event;
+    _fetchEventDetails();
   }
 
-  Future<void> _fetchDetails() async {
+  Future<void> _fetchEventDetails() async {
+    final supabase = Supabase.instance.client;
     try {
-      final currentUserId = _supabase.auth.currentUser?.id;
-
-      // 1. Fetch Organizer Profile
-      final organizerRes = await _supabase
+      // 1. Refresh Event Data (in case of updates)
+      final freshEvent = await supabase.from('events').select().eq('id', _event['id']).single();
+      
+      // 2. Fetch Organizer Profile
+      final organizer = await supabase
           .from('profiles')
           .select()
-          .eq('id', _eventData['organizer_id'])
+          .eq('id', freshEvent['organizer_id'])
           .maybeSingle();
-
-      // 2. Fetch Attendee Count
-      final countRes = await _supabase
-          .from('event_participants')
-          .count()
-          .eq('event_id', _eventData['id']);
-
-      // 3. Check if Current User Joined
-      bool joined = false;
-      if (currentUserId != null) {
-        final joinRes = await _supabase
-            .from('event_participants')
-            .select()
-            .eq('event_id', _eventData['id'])
-            .eq('user_id', currentUserId)
-            .maybeSingle();
-        joined = joinRes != null;
-      }
 
       if (mounted) {
         setState(() {
-          _organizerProfile = organizerRes;
-          _attendeeCount = countRes;
-          _isJoined = joined;
+          _event = freshEvent;
+          _organizer = organizer;
           _isLoading = false;
         });
       }
     } catch (e) {
       debugPrint("Error fetching details: $e");
-      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  Future<void> _toggleJoin() async {
-    final user = _supabase.auth.currentUser;
-    if (user == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please login to join")));
-      return;
-    }
+  // Live Comment Stream
+  Stream<List<Map<String, dynamic>>> _commentsStream() {
+    return Supabase.instance.client
+        .from('comments')
+        .stream(primaryKey: ['id'])
+        .eq('event_id', _event['id'])
+        .order('created_at', ascending: true)
+        .map((data) => List<Map<String, dynamic>>.from(data));
+  }
+
+  Future<void> _postComment() async {
+    if (_commentCtrl.text.trim().isEmpty) return;
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
 
     try {
-      if (_isJoined) {
-        // LEAVE
-        await _supabase
-            .from('event_participants')
-            .delete()
-            .eq('event_id', _eventData['id'])
-            .eq('user_id', user.id);
-        setState(() {
-          _isJoined = false;
-          _attendeeCount--;
-        });
-      } else {
-        // JOIN
-        await _supabase
-            .from('event_participants')
-            .insert({'event_id': _eventData['id'], 'user_id': user.id});
-        setState(() {
-          _isJoined = true;
-          _attendeeCount++;
-        });
-      }
+      await Supabase.instance.client.from('comments').insert({
+        'event_id': _event['id'], // Link to Event
+        'user_id': user.id,
+        'body': _commentCtrl.text.trim(),
+      });
+      _commentCtrl.clear();
+      FocusScope.of(context).unfocus();
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
     }
   }
 
-  Future<void> _deleteEvent() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Delete Event?"),
-        content: const Text("This cannot be undone."),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true), 
-            child: Text("Delete", style: TextStyle(color: Theme.of(context).colorScheme.error))
-          ),
-        ],
-      ),
-    );
-
-    if (confirm == true && mounted) {
-      try {
-        await _supabase.from('events').delete().eq('id', _eventData['id']);
-        if (mounted) {
-          // Refresh profile if we came from there
-          if (widget.isOwnerOverride) {
-            context.read<ProfileCubit>().loadProfile();
-          }
-          Navigator.pop(context);
-        }
-      } catch (e) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final user = _supabase.auth.currentUser;
-    final isOwner = widget.isOwnerOverride || (user != null && user.id == _eventData['organizer_id']);
-    
-    // SAFETY CHECK: Handle null image
-    final String? imageUrl = _eventData['image_url']; 
-    final hasImage = imageUrl != null && imageUrl.isNotEmpty;
-
-    // SAFETY CHECK: Handle dates
-    final startDate = DateTime.parse(_eventData['start_datetime']).toLocal();
-    final endDate = _eventData['end_datetime'] != null 
-        ? DateTime.parse(_eventData['end_datetime']).toLocal() 
-        : startDate.add(const Duration(hours: 2)); // Fallback for old events
-
-    final dateString = "${DateFormat('d MMM').format(startDate)} • ${DateFormat('h:mm a').format(startDate)} - ${DateFormat('h:mm a').format(endDate)}";
-    final tags = List<String>.from(_eventData['tags'] ?? []);
+    final theme = Theme.of(context);
+    final startDate = DateTime.parse(_event['start_datetime']);
+    final endDate = DateTime.parse(_event['end_datetime']);
+    final gallery = List<String>.from(_event['gallery_urls'] ?? []);
 
     return Scaffold(
       body: CustomScrollView(
         slivers: [
+          // 1. APP BAR WITH IMAGE PREVIEW
           SliverAppBar(
-            expandedHeight: 250,
+            expandedHeight: 300,
             pinned: true,
-            leading: IconButton(
-              icon: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: Colors.black.withOpacity(0.4), shape: BoxShape.circle),
-                child: const Icon(Icons.arrow_back, color: Colors.white),
+            leading: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: CircleAvatar(
+                backgroundColor: Colors.black45,
+                child: IconButton(
+                  icon: const Icon(Icons.arrow_back, color: Colors.white),
+                  onPressed: () => Navigator.pop(context),
+                ),
               ),
-              onPressed: () => Navigator.pop(context),
             ),
+            actions: [
+               // Share Button
+               Padding(
+                padding: const EdgeInsets.only(right: 8.0),
+                child: CircleAvatar(
+                  backgroundColor: Colors.black45,
+                  child: IconButton(
+                    icon: const Icon(Icons.ios_share, color: Colors.white),
+                    onPressed: () {
+                      // Navigate to Create Post with this event attached
+                      Navigator.push(
+                        context, 
+                        MaterialPageRoute(builder: (_) => CreatePostScreen(sharedEvent: _event))
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ],
             flexibleSpace: FlexibleSpaceBar(
-              background: hasImage
-                  ? CachedNetworkImage(
-                      imageUrl: imageUrl,
-                      fit: BoxFit.cover,
-                      errorWidget: (context, url, error) => Container(color: Theme.of(context).colorScheme.surfaceContainerHighest),
-                    )
-                  : Container(
-                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                      child: Center(
-                        child: Icon(Icons.event, size: 64, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                      ),
-                    ),
+              background: GestureDetector(
+                onTap: () {
+                   // PREVIEW IMAGE LOGIC
+                   Navigator.push(
+                     context,
+                     MaterialPageRoute(builder: (_) => ImagePreviewScreen(imageUrl: _event['image_url'] ?? ''))
+                   );
+                },
+                child: Hero(
+                  tag: _event['id'],
+                  child: CachedNetworkImage(
+                    imageUrl: _event['image_url'] ?? '',
+                    fit: BoxFit.cover,
+                    placeholder: (_,__) => const Center(child: CircularProgressIndicator()),
+                    errorWidget: (_,__,___) => Container(color: Colors.grey, child: const Icon(Icons.event)),
+                  ),
+                ),
+              ),
             ),
           ),
+
+          // 2. EVENT DETAILS BODY
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // TITLE
-                  Text(
-                    _eventData['title'] ?? 'Untitled Event', // SAFETY
-                    style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
+                  // Title
+                  Text(_event['title'], style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 16),
+
+                  // Info Rows (Date & Location)
+                  _infoRow(Icons.calendar_today, 
+                    "${DateFormat('d MMM yyyy').format(startDate)} • ${DateFormat('h:mm a').format(startDate)}", 
+                    theme
                   ),
                   const SizedBox(height: 12),
+                  _infoRow(Icons.location_on, _event['location'] ?? 'Campus', theme),
                   
-                  // TAGS
-                  if (tags.isNotEmpty)
-                    Wrap(
-                      spacing: 8,
-                      children: tags.map((tag) => Chip(
-                        label: Text(tag, style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSecondaryContainer)),
-                        backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
-                        side: BorderSide.none,
-                        visualDensity: VisualDensity.compact,
-                      )).toList(),
-                    ),
-                  const SizedBox(height: 20),
-
-                  // INFO ROWS
-                  _infoRow(Icons.calendar_month, dateString, context),
-                  const SizedBox(height: 12),
-                  _infoRow(Icons.location_on, _eventData['location'] ?? 'UiTM Kerawang', context),
-                  const SizedBox(height: 12),
-                  _infoRow(Icons.group, "$_attendeeCount people going", context),
-
                   const SizedBox(height: 24),
                   const Divider(),
-                  const SizedBox(height: 24),
 
-                  // ORGANIZER CARD
-                  if (_organizerProfile != null)
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.2)),
-                        borderRadius: BorderRadius.circular(12),
-                        color: Theme.of(context).colorScheme.surfaceContainer,
+                  // Organizer Tile
+                  if (_organizer != null)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: CircleAvatar(
+                        backgroundImage: _organizer!['avatar_url'] != null 
+                          ? NetworkImage(_organizer!['avatar_url']) 
+                          : null,
+                        child: _organizer!['avatar_url'] == null ? const Icon(Icons.person) : null,
                       ),
-                      child: Row(
-                        children: [
-                          CircleAvatar(
-                            backgroundImage: _organizerProfile!['avatar_url'] != null
-                                ? CachedNetworkImageProvider(_organizerProfile!['avatar_url'])
-                                : null,
-                            onBackgroundImageError: _organizerProfile!['avatar_url'] != null ? (_, __) {} : null,
-                            child: _organizerProfile!['avatar_url'] == null 
-                                ? Icon(Icons.person, color: Theme.of(context).colorScheme.onSurfaceVariant) 
-                                : null,
-                          ),
-                          const SizedBox(width: 12),
-                          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Text(_organizerProfile!['full_name'] ?? 'Organizer', style: const TextStyle(fontWeight: FontWeight.bold)),
-                            Text("Event Host", style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12)),
-                          ]),
-                        ],
+                      title: Text(_organizer!['display_name'] ?? 'Organizer', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Text(_organizer!['role'] == 'club' ? "Official Club" : "Student Host"),
+                      trailing: OutlinedButton(
+                        onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: _organizer!['id']))),
+                        child: const Text("View Profile"),
                       ),
                     ),
 
-                  const SizedBox(height: 24),
-                  Text("About Event", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface)),
+                  const Divider(),
+                  const SizedBox(height: 16),
+
+                  // Gallery (Horizontal Scroll)
+                  if (gallery.isNotEmpty) ...[
+                    const Text("Gallery", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      height: 120,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: gallery.length,
+                        itemBuilder: (context, index) {
+                          return GestureDetector(
+                            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ImagePreviewScreen(imageUrl: gallery[index]))),
+                            child: Container(
+                              width: 160,
+                              margin: const EdgeInsets.only(right: 8),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(8),
+                                image: DecorationImage(image: NetworkImage(gallery[index]), fit: BoxFit.cover),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                  ],
+
+                  // Description
+                  const Text("About Event", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
                   const SizedBox(height: 8),
-                  Text(
-                    _eventData['description'] ?? 'No description provided.',
-                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface, height: 1.5),
+                  Text(_event['description'] ?? 'No details provided.', style: const TextStyle(fontSize: 16, height: 1.5, color: Colors.grey)),
+                  
+                  const SizedBox(height: 32),
+                  
+                  // Registration Button
+                  if (_event['registration_link'] != null)
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        icon: const Icon(Icons.link),
+                        label: const Text("Register Online"),
+                        style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+                        onPressed: () async {
+                          final uri = Uri.parse(_event['registration_link']);
+                          if (await canLaunchUrl(uri)) {
+                            await launchUrl(uri, mode: LaunchMode.externalApplication);
+                          }
+                        },
+                      ),
+                    ),
+                  
+                  const SizedBox(height: 32),
+                  const Divider(thickness: 4),
+
+                  // DISCUSSION SECTION
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Text("Discussion", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
                   ),
-                  const SizedBox(height: 80),
+                  
+                  // Comments List
+                  StreamBuilder<List<Map<String, dynamic>>>(
+                    stream: _commentsStream(),
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                        return const Center(child: Padding(padding: EdgeInsets.all(16), child: Text("No comments yet. Ask a question!")));
+                      }
+                      return ListView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: snapshot.data!.length,
+                        itemBuilder: (context, index) {
+                          final c = snapshot.data![index];
+                          return ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const CircleAvatar(radius: 14, child: Icon(Icons.person, size: 14)),
+                            title: Text(c['body']),
+                            subtitle: Text(timeago.format(DateTime.parse(c['created_at'])), style: const TextStyle(fontSize: 10)),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                  
+                  const SizedBox(height: 80), // Space for input field
                 ],
               ),
             ),
           ),
         ],
       ),
+      
+      // 3. BOTTOM INPUT BAR (For Comments)
       bottomSheet: Container(
-        padding: const EdgeInsets.all(16),
-        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         decoration: BoxDecoration(
-          color: Theme.of(context).scaffoldBackgroundColor,
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, -5))]
+          color: theme.scaffoldBackgroundColor,
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 5, offset: const Offset(0, -2))],
         ),
-        child: isOwner
-            ? Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: _deleteEvent,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Theme.of(context).colorScheme.error,
-                        side: BorderSide(color: Theme.of(context).colorScheme.error),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      child: const Text("Delete"),
-                    ),
+        child: SafeArea(
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _commentCtrl,
+                  decoration: InputDecoration(
+                    hintText: "Ask about this event...",
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
+                    filled: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () async {
-                         final result = await Navigator.push(
-                           context, 
-                           MaterialPageRoute(builder: (_) => CreateEventScreen(eventToEdit: _eventData))
-                         );
-                         if (result == true && mounted) {
-                           _fetchDetails(); // Refresh details
-                           // Update the local data map too so the UI updates instantly
-                           // (Ideally re-fetch full event, but this is a quick fix)
-                         }
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Theme.of(context).colorScheme.primary,
-                        foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      child: const Text("Update"),
-                    ),
-                  ),
-                ],
-              )
-            : ElevatedButton(
-                onPressed: _isLoading ? null : _toggleJoin,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _isJoined 
-                      ? Theme.of(context).colorScheme.surfaceContainerHighest 
-                      : Theme.of(context).colorScheme.primary,
-                  foregroundColor: _isJoined 
-                      ? Theme.of(context).colorScheme.onSurface 
-                      : Theme.of(context).colorScheme.onPrimary,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  elevation: 0,
                 ),
-                child: Text(_isJoined ? "Joined" : "Join Event", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
               ),
+              IconButton(icon: const Icon(Icons.send), onPressed: _postComment),
+            ],
+          ),
+        ),
       ),
     );
   }
 
-  Widget _infoRow(IconData icon, String text, BuildContext context) {
+  Widget _infoRow(IconData icon, String text, ThemeData theme) {
     return Row(
       children: [
-        Icon(icon, color: Theme.of(context).colorScheme.primary, size: 20),
+        Icon(icon, size: 20, color: theme.colorScheme.primary),
         const SizedBox(width: 12),
-        Expanded(child: Text(text, style: const TextStyle(fontSize: 15))),
+        Expanded(child: Text(text, style: const TextStyle(fontSize: 16))),
       ],
     );
   }

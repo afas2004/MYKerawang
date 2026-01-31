@@ -1,256 +1,310 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:path/path.dart';
+import 'package:mykerawang/screens/edit_profile_screen.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:qr_flutter/qr_flutter.dart'; 
+import '../widgets/universal_card.dart';
+import '../widgets/post_card.dart';
 import 'settings_screen.dart';
-import 'edit_profile_screen.dart';
-import 'item_detail_screen.dart';
-import 'event_detail_screen.dart';
-import 'profile_cubit.dart';
-import 'package:intl/intl.dart';
+import 'item_detail_screen.dart'; // Needed for navigation
 
-class ProfileScreen extends StatelessWidget {
-  const ProfileScreen({super.key});
+class ProfileScreen extends StatefulWidget {
+  final String? userId; 
+
+  const ProfileScreen({super.key, this.userId});
 
   @override
-  Widget build(BuildContext context) {
-    return const ProfileView();
-  }
+  State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class ProfileView extends StatelessWidget {
-  const ProfileView({super.key});
+class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProviderStateMixin {
+  final _supabase = Supabase.instance.client;
+  late TabController _tabController; // Controls the 3 tabs
+  
+  bool _isLoading = true;
+  bool _isMe = false;
+  bool _isFollowing = false;
+  
+  Map<String, dynamic>? _profile;
+  List<dynamic> _userPosts = [];
+  List<dynamic> _userEvents = [];
+  List<dynamic> _userListings = []; // <--- NEW: Store Listings
+  
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 3, vsync: this); // <--- CHANGED: 2 -> 3
+    _fetchProfileData();
+  }
+
+  Future<void> _fetchProfileData() async {
+    final currentUid = _supabase.auth.currentUser?.id;
+    final targetUid = widget.userId ?? currentUid;
+
+    if (targetUid == null) return; 
+
+    _isMe = (currentUid == targetUid);
+
+    try {
+      // 1. Fetch Profile
+      final profileData = await _supabase.from('profiles').select().eq('id', targetUid).single();
+      
+      // 2. Fetch Content (Posts, Events, AND Listings)
+      final posts = await _supabase.from('posts').select().eq('user_id', targetUid).order('created_at', ascending: false);
+      final events = await _supabase.from('events').select().eq('organizer_id', targetUid).order('start_datetime', ascending: false);
+      
+      // <--- NEW: Fetch Listings
+      final listings = await _supabase.from('listings').select().eq('seller_id', targetUid).eq('is_sold', false).order('created_at', ascending: false);
+
+      // 3. Check Follow Status
+      if (!_isMe && currentUid != null) {
+        final followCheck = await _supabase.from('follows')
+            .select()
+            .eq('follower_id', currentUid)
+            .eq('following_id', targetUid)
+            .maybeSingle();
+        _isFollowing = followCheck != null;
+      }
+
+      if (mounted) {
+        setState(() {
+          _profile = profileData;
+          _userPosts = posts.map((p) => {...p, 'type': 'post'}).toList();
+          _userEvents = events.map((e) => {...e, 'type': 'event'}).toList();
+          _userListings = listings.map((l) => {...l, 'type': 'listing'}).toList(); // <--- NEW
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint("Error loading profile: $e");
+    }
+  }
+
+  Future<void> _toggleFollow() async {
+    final currentUid = _supabase.auth.currentUser?.id;
+    final targetUid = widget.userId;
+    if (currentUid == null || targetUid == null) return;
+
+    setState(() => _isFollowing = !_isFollowing); 
+
+    try {
+      if (_isFollowing) {
+        await _supabase.from('follows').insert({'follower_id': currentUid, 'following_id': targetUid});
+      } else {
+        await _supabase.from('follows').delete().match({'follower_id': currentUid, 'following_id': targetUid});
+      }
+    } catch (e) {
+      setState(() => _isFollowing = !_isFollowing); 
+    }
+  }
+
+  void _showQRCode() {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text("Scan to Follow", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              const SizedBox(height: 20),
+              QrImageView(
+                data: "mykerawang://user/${widget.userId ?? _supabase.auth.currentUser?.id}",
+                version: QrVersions.auto,
+                size: 200.0,
+              ),
+              const SizedBox(height: 20),
+              Text("@${_profile?['username'] ?? 'user'}", style: const TextStyle(color: Colors.grey)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    // 1. Wrap everything in DefaultTabController
-    return DefaultTabController(
-      length: 2, // We have 2 tabs: Market & Events
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text("My Profile"),
-          actions: [
+    if (_isLoading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (_profile == null) return const Scaffold(body: Center(child: Text("User not found")));
+
+    final theme = Theme.of(context);
+    final isClub = _profile!['role'] == 'club';
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(_profile!['username'] != null ? "@${_profile!['username']}" : "Profile"),
+        actions: [
+          IconButton(icon: const Icon(Icons.qr_code), onPressed: _showQRCode),
+          if (_isMe)
             IconButton(
               icon: const Icon(Icons.settings),
-              onPressed: () {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
-              },
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen())),
             ),
-          ],
-        ),
-        body: BlocBuilder<ProfileCubit, ProfileState>(
-          builder: (context, state) {
-            if (state.isLoading) return const Center(child: CircularProgressIndicator());
-            if (state.errorMessage != null) {
-              return Center(child: Text(state.errorMessage!, style: TextStyle(color: Theme.of(context).colorScheme.error)));
-            }
-            if (state.profile == null) return const Center(child: Text("Profile not found"));
-
-            final profile = state.profile!;
-            
-            return NestedScrollView(
-              // 2. The Header stays visible (or scrolls away if you prefer)
-              headerSliverBuilder: (context, _) {
-                return [
-                  SliverList(
-                    delegate: SliverChildListDelegate([
-                      _buildProfileHeader(context, profile),
-                    ]),
-                  ),
-                ];
-              },
-              // 3. The Body holds the Tabs
-              body: Column(
+        ],
+      ),
+      body: NestedScrollView(
+        headerSliverBuilder: (context, _) => [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
                 children: [
-                  // --- THE TABS ---
-                  TabBar(
-                    labelColor: Theme.of(context).colorScheme.primary,
-                    unselectedLabelColor: Theme.of(context).colorScheme.onSurfaceVariant,
-                    indicatorColor: Theme.of(context).colorScheme.primary,
-                    indicatorSize: TabBarIndicatorSize.tab,
-                    tabs: const [
-                      Tab(icon: Icon(Icons.grid_on), text: "Listings"),
-                      Tab(icon: Icon(Icons.calendar_month_outlined), text: "Events"),
+                  // Avatar
+                  CircleAvatar(
+                    radius: 40,
+                    backgroundImage: _profile!['avatar_url'] != null 
+                        ? NetworkImage(_profile!['avatar_url']) 
+                        : null,
+                    backgroundColor: theme.colorScheme.primaryContainer,
+                    child: _profile!['avatar_url'] == null 
+                        ? Text(_profile!['display_name']?[0] ?? "U", style: const TextStyle(fontSize: 30)) 
+                        : null,
+                  ),
+                  const SizedBox(height: 12),
+                  
+                  // Name & Badge
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        _profile!['display_name'] ?? "UiTM Student",
+                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      ),
+                      if (_profile!['is_verified'] == true) ...[
+                        const SizedBox(width: 4),
+                        const Icon(Icons.verified, color: Colors.blue, size: 20),
+                      ]
                     ],
                   ),
                   
-                  // --- THE VIEWS ---
-                  Expanded(
-                    child: TabBarView(
-                      children: [
-                        _buildMarketGrid(state.listings),
-                        _buildEventsList(state.events),
-                      ],
+                  if (_profile!['bio'] != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(_profile!['bio'], textAlign: TextAlign.center, style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
                     ),
+
+                  const SizedBox(height: 16),
+
+                  // Stats Row
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _statItem("Posts", "${_userPosts.length}"),
+                      _statItem("Selling", "${_userListings.length}"), // <--- NEW: Selling Count
+                      _statItem("Followers", "${_profile!['followers_count'] ?? 0}"),
+                    ],
                   ),
+                  const SizedBox(height: 20),
+
+                  // Follow / Edit Button
+                  if (!_isMe)
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: _toggleFollow,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _isFollowing ? Colors.grey[300] : theme.colorScheme.primary,
+                          foregroundColor: _isFollowing ? Colors.black : Colors.white,
+                        ),
+                        child: Text(_isFollowing ? "Following" : "Follow"),
+                      ),
+                    ),
+                  if (_isMe && !isClub)
+                    OutlinedButton(
+                      onPressed: () {
+                         Navigator.push(
+                          context, 
+                          MaterialPageRoute(builder: (_) => const EditProfileScreen())
+                        ).then((value) {
+                          if (value == true) _fetchProfileData(); // Refresh profile when back
+                        });
+                      },
+                      child: const Text("Edit Profile"),
+                    ),
                 ],
               ),
-            );
-          },
+            ),
+          ),
+        ],
+        body: Column(
+          children: [
+            TabBar(
+              controller: _tabController,
+              labelColor: theme.colorScheme.primary,
+              unselectedLabelColor: Colors.grey,
+              indicatorColor: theme.colorScheme.primary,
+              tabs: const [
+                Tab(text: "Activity"),
+                Tab(text: "Events"),
+                Tab(text: "Shop"), // <--- NEW TAB
+              ],
+            ),
+            Expanded(
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  // Tab 1: Posts
+                  _userPosts.isEmpty
+                    ? const Center(child: Text("No posts yet"))
+                    : ListView.builder(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: _userPosts.length,
+                        itemBuilder: (context, index) {
+                          return PostCard(post: _userPosts[index], onTap: () {});
+                        },
+                      ),
+                  
+                  // Tab 2: Events
+                  _userEvents.isEmpty 
+                    ? const Center(child: Text("No events hosted"))
+                    : ListView.builder(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: _userEvents.length,
+                        itemBuilder: (context, index) {
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: UniversalCard(
+                              data: _userEvents[index], 
+                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ItemDetailScreen(item: _userEvents[index]))) // Use Event Detail if available
+                            ),
+                          );
+                        },
+                      ),
+
+                  // Tab 3: Shop (Listings) <--- NEW LISTVIEW
+                  _userListings.isEmpty
+                    ? const Center(child: Text("Not selling anything"))
+                    : GridView.builder( // Use Grid for items looks better
+                        padding: const EdgeInsets.all(16),
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          childAspectRatio: 0.75,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                        ),
+                        itemCount: _userListings.length,
+                        itemBuilder: (context, index) {
+                          return UniversalCard(
+                            data: _userListings[index], 
+                            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ItemDetailScreen(item: _userListings[index]))),
+                          );
+                        },
+                      ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  // --- 1. HEADER SECTION ---
-  Widget _buildProfileHeader(BuildContext context, Map<String, dynamic> profile) {
-    return Padding(
-      padding: const EdgeInsets.all(20.0),
-      child: Column(
-        children: [
-          CircleAvatar(
-            radius: 50,
-            backgroundImage: profile['avatar_url'] != null
-                ? CachedNetworkImageProvider(profile['avatar_url'])
-                : null,
-            backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-            child: profile['avatar_url'] == null 
-                ? Icon(Icons.person, size: 50, color: Theme.of(context).colorScheme.onSurfaceVariant) 
-                : null,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            profile['full_name'] ?? 'No Name',
-            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            profile['role'] == 'student' ? 'UiTM Student' : 'Club Admin',
-            style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 16),
-          ),
-          const SizedBox(height: 20),
-          // Edit Profile Button (Optional)
-          OutlinedButton(
-            onPressed: () {
-               // Navigation to Edit Profile Screen
-            },
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(double.infinity, 45),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-            child: const Text("Edit Profile"),
-          ),
-        ],
-      ),
+  Widget _statItem(String label, String count) {
+    return Column(
+      children: [
+        Text(count, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+      ],
     );
   }
-
-  // --- 2. MARKET GRID (Instagram Style) ---
-  Widget _buildMarketGrid(List<dynamic> listings) {
-    if (listings.isEmpty) return _emptyState("No active listings");
-
-    return GridView.builder(
-      padding: const EdgeInsets.all(2),
-      itemCount: listings.length,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3, // 3 items per row
-        crossAxisSpacing: 2,
-        mainAxisSpacing: 2,
-        childAspectRatio: 1, // Square tiles
-      ),
-      itemBuilder: (context, index) {
-        final item = listings[index];
-        return GestureDetector(
-          onTap: () async {
-            await Navigator.push(
-              context, 
-              MaterialPageRoute(builder: (_) => ItemDetailScreen(item: item))
-            );
-            // Refresh on return
-            if (context.mounted) context.read<ProfileCubit>().loadProfile();
-          },
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              CachedNetworkImage(
-                imageUrl: item['image_url'] ?? '',
-                fit: BoxFit.cover,
-                placeholder: (context, url) => Container(color: Theme.of(context).colorScheme.surfaceContainerHighest),
-                errorWidget: (context, url, error) => const Icon(Icons.broken_image),
-              ),
-              // Price Tag Overlay
-              Positioned(
-                bottom: 4,
-                right: 4,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.6),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    "RM${item['price']}",
-                    style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              )
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  // --- 3. EVENTS LIST (Vertical Cards) ---
-  Widget _buildEventsList(List<dynamic> events) {
-    if (events.isEmpty) return _emptyState("No upcoming events");
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: events.length,
-      itemBuilder: (context, index) {
-        final event = events[index];
-        
-        // Date Formatting
-        String dateString = 'Event';
-        if (event['start_datetime'] != null) {
-           final date = DateTime.parse(event['start_datetime']).toLocal();
-           dateString = DateFormat('d MMM, h:mm a').format(date);
-        }
-
-        return Card(
-          margin: const EdgeInsets.only(bottom: 12),
-          elevation: 0,
-          color: Theme.of(context).colorScheme.surfaceContainer, // Darker card in light mode
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          child: ListTile(
-            contentPadding: const EdgeInsets.all(12),
-            leading: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: CachedNetworkImage(
-                imageUrl: event['image_url'] ?? '',
-                width: 60,
-                height: 60,
-                fit: BoxFit.cover,
-                errorWidget: (_,__,___) => const Icon(Icons.event),
-              ),
-            ),
-            title: Text(event['title'], maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: Text(dateString, style: TextStyle(color: Theme.of(context).colorScheme.primary)),
-            onTap: () async {
-              await Navigator.push(
-                context, 
-                MaterialPageRoute(builder: (_) => EventDetailScreen(event: event, isOwnerOverride: true))
-              );
-              if (context.mounted) context.read<ProfileCubit>().loadProfile();
-            },
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _emptyState(String text) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.layers_clear, size: 48, color: Theme.of(context as BuildContext).colorScheme.onSurfaceVariant),
-          const SizedBox(height: 12),
-          Text(text, style: TextStyle(color: Theme.of(context as BuildContext).colorScheme.onSurfaceVariant)),
-        ],
-      ),
-    );
-  }
-
 }

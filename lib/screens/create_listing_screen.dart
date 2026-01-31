@@ -20,7 +20,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   late TextEditingController _descriptionController;
   
   String _category = 'Books';
-  final List<String> _categories = ['Books', 'Electronics', 'Food', 'Others', 'Clothing', 'Services'];
+  final List<String> _categories = ['Electronics', 'Books', 'Furniture', 'Clothing', 'Sports', 'Others'];
   
   File? _imageFile;
   String? _existingImageUrl; // To hold old image if editing
@@ -199,12 +199,29 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
               
               GestureDetector(
                 onTap: () {
+                  // 1. If empty, open picker
                   if (_imageFile == null && _existingImageUrl == null) {
                     _showImageOptions();
-                  } else {
-                    // Preview logic if you have ImagePreviewScreen
-                    // Navigator.push(...) 
-                     _showImageOptions(); // Allow change on tap
+                  } 
+                  // 2. If image exists, PREVIEW IT
+                  else {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => Scaffold(
+                          appBar: AppBar(
+                            backgroundColor: Colors.black,
+                            iconTheme: const IconThemeData(color: Colors.white),
+                          ),
+                          backgroundColor: Colors.black,
+                          body: Center(
+                            child: _imageFile != null
+                                ? Image.file(_imageFile!) // Preview local file
+                                : Image.network(_existingImageUrl!), // Preview URL
+                          ),
+                        ),
+                      ),
+                    );
                   }
                 },
                 child: Container(
