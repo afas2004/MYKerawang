@@ -102,10 +102,14 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
   }
 
   void _showQRCode() {
+    final theme = Theme.of(context);
+    final qrColor = theme.colorScheme.onSurface; 
+
     showDialog(
       context: context,
       builder: (ctx) => Dialog(
-        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        backgroundColor: theme.scaffoldBackgroundColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: DefaultTabController(
           length: 2,
           child: SizedBox(
@@ -117,27 +121,66 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                 ),
                 Expanded(
                   child: TabBarView(
+                    physics: const NeverScrollableScrollPhysics(),
                     children: [
                       // TAB 1: MY CODE
                       Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          QrImageView(
-                            data: "mykerawang://user/${widget.userId ?? _supabase.auth.currentUser?.id}",
-                            version: QrVersions.auto,
-                            size: 200.0,
-                            // Point 7: Adapt color to theme
-                            eyeStyle: QrEyeStyle(eyeShape: QrEyeShape.square, color: Theme.of(context).primaryColor),
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.surfaceContainer,
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: QrImageView(
+                              data: "mykerawang://user/${widget.userId ?? _supabase.auth.currentUser?.id}",
+                              version: QrVersions.auto,
+                              size: 200.0,
+                              eyeStyle: QrEyeStyle(
+                                eyeShape: QrEyeShape.square,
+                                color: qrColor,
+                              ),
+                              dataModuleStyle: QrDataModuleStyle(
+                                dataModuleShape: QrDataModuleShape.square,
+                                color: qrColor,
+                              ),
+                            ),
                           ),
                           const SizedBox(height: 20),
-                          Text("@${_profile?['username']}", style: const TextStyle(fontWeight: FontWeight.bold)),
+                          Text(
+                            "@${_profile?['username'] ?? 'User'}",
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                          ),
                         ],
                       ),
-                      
-                      // TAB 2: SCANNER
+
+                      // TAB 2: SCANNER (FIXED)
                       ClipRRect(
                         borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
                         child: MobileScanner(
+                          // FIX 1: Only 2 arguments (context, error)
+                          errorBuilder: (context, error) { 
+                            return Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.videocam_off, color: Colors.grey, size: 40),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    "Camera Error: ${error.errorCode}",
+                                    style: const TextStyle(color: Colors.grey),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                          // FIX 2: Only 1 argument (context)
+                          placeholderBuilder: (context) {
+                            return const Center(
+                              child: CircularProgressIndicator(),
+                            );
+                          },
                           onDetect: (capture) {
                             final List<Barcode> barcodes = capture.barcodes;
                             for (final barcode in barcodes) {
@@ -145,8 +188,12 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                                 final code = barcode.rawValue!;
                                 if (code.startsWith("mykerawang://user/")) {
                                   final userId = code.split("/").last;
-                                  Navigator.pop(ctx); // Close dialog
-                                  Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: userId)));
+                                  Navigator.pop(ctx);
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(builder: (_) => ProfileScreen(userId: userId)),
+                                  );
+                                  break;
                                 }
                               }
                             }

@@ -25,6 +25,15 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   int _currentImageIndex = 0; 
   final _commentCtrl = TextEditingController();
 
+  final List<String> _trustedDomains = [
+    'uitm.edu.my', 
+    'google.com', 'forms.gle', 'docs.google.com',
+    'whatsapp.com', 'wa.me',
+    'instagram.com', 'facebook.com', 'twitter.com', 'x.com',
+    't.me', 'telegram.org',
+    'linkedin.com'
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -106,6 +115,38 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     }
   }
 
+  // --- 2. SAFETY: LINK CHECKER ---
+  Future<void> _launchSafeUrl(String url) async {
+    final uri = Uri.parse(url);
+    final host = uri.host.toLowerCase().replaceFirst('www.', '');
+
+    bool isTrusted = _trustedDomains.any((domain) => host.endsWith(domain));
+
+    if (isTrusted) {
+      // Safe -> Launch immediately
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      // Unknown -> Warning Dialog
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Row(children: [Icon(Icons.warning_amber, color: Colors.orange), SizedBox(width: 8), Text("Leaving App")]),
+          content: Text("This link goes to an external site:\n\n$host\n\nAre you sure it's safe?"),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                launchUrl(uri, mode: LaunchMode.externalApplication);
+              },
+              child: const Text("Open Anyway"),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentUser = Supabase.instance.client.auth.currentUser;
@@ -123,6 +164,10 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       if (_event['image_url'] != null) _event['image_url'],
       ...?(_event['gallery_urls'] as List?)?.cast<String>(),
     ];
+
+    final bool isPast = endDate != null 
+        ? endDate.isBefore(DateTime.now()) 
+        : startDate.add(const Duration(hours: 4)).isBefore(DateTime.now());
 
     return Scaffold(
       body: CustomScrollView(
@@ -176,6 +221,26 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                           ),
                         );
                       },
+                    ),
+
+                    if (isPast)
+                    Positioned.fill(
+                      child: Container(
+                        color: Colors.black.withOpacity(0.4),
+                        child: Center(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.white, width: 2),
+                              color: Colors.black54,
+                            ),
+                            child: const Text(
+                              "EVENT ENDED",
+                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20, letterSpacing: 2),
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
 
                     // 2. THE BADGE (e.g. "1/5")
@@ -286,20 +351,21 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                     
                     // --- REGISTER BUTTON (VISIBLE TO EVERYONE HERE) ---
                     if (_event['registration_link'] != null)
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.icon(
-                          icon: const Icon(Icons.link),
-                          label: const Text("Register Online"),
-                          style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
-                          onPressed: () async {
-                            final uri = Uri.parse(_event['registration_link']);
-                            if (await canLaunchUrl(uri)) {
-                              await launchUrl(uri, mode: LaunchMode.externalApplication);
-                            }
-                          },
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        icon: Icon(isPast ? Icons.event_busy : Icons.link),
+                        label: Text(isPast ? "Registration Closed" : "Register Online"),
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          // Disable color if past
+                          backgroundColor: isPast ? Colors.grey : theme.colorScheme.primary,
                         ),
+                        onPressed: isPast 
+                          ? null // DISABLE CLICK
+                          : () => _launchSafeUrl(_event['registration_link']), // USE SAFE LAUNCHER
                       ),
+                    ),
 
                     const SizedBox(height: 32),
                     const Divider(thickness: 4),
