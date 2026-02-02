@@ -41,13 +41,13 @@ class EventsState {
 
 class EventsCubit extends Cubit<EventsState> {
   EventsCubit() : super(EventsState()) {
-    _loadData();
+    loadData();
   }
 
   StreamSubscription? _subscription;
   final _supabase = Supabase.instance.client;
 
-  Future<void> _loadData() async {
+  Future<void> loadData() async {
    
     emit(state.copyWith(isLoading: true));
 

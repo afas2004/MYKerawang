@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:mykerawang/screens/edit_profile_screen.dart';
+import 'package:mykerawang/screens/event_detail_screen.dart';
+import 'package:mykerawang/widgets/linear_refresher';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:qr_flutter/qr_flutter.dart'; 
 import '../widgets/universal_card.dart';
@@ -142,7 +144,11 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
             ),
         ],
       ),
-      body: NestedScrollView(
+      body: LinearRefresher(
+      onRefresh: _fetchProfileData,
+      offset: 0.0,
+      child: NestedScrollView(
+        physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
         headerSliverBuilder: (context, _) => [
           SliverToBoxAdapter(
             child: Padding(
@@ -248,6 +254,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                     ? const Center(child: Text("No posts yet"))
                     : ListView.builder(
                         padding: const EdgeInsets.all(16),
+                        physics: const AlwaysScrollableScrollPhysics(),
                         itemCount: _userPosts.length,
                         itemBuilder: (context, index) {
                           return PostCard(post: _userPosts[index], onTap: () {});
@@ -259,13 +266,14 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                     ? const Center(child: Text("No events hosted"))
                     : ListView.builder(
                         padding: const EdgeInsets.all(16),
+                        physics: const AlwaysScrollableScrollPhysics(),
                         itemCount: _userEvents.length,
                         itemBuilder: (context, index) {
                           return Padding(
                             padding: const EdgeInsets.only(bottom: 12),
                             child: UniversalCard(
                               data: _userEvents[index], 
-                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ItemDetailScreen(item: _userEvents[index]))) // Use Event Detail if available
+                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => EventDetailScreen(event: _userEvents[index]))) // Use Event Detail if available
                             ),
                           );
                         },
@@ -275,13 +283,14 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                   _userListings.isEmpty
                     ? const Center(child: Text("Not selling anything"))
                     : GridView.builder( // Use Grid for items looks better
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(14),
                         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: 2,
                           childAspectRatio: 0.75,
                           crossAxisSpacing: 12,
                           mainAxisSpacing: 12,
                         ),
+                        physics: const AlwaysScrollableScrollPhysics(),
                         itemCount: _userListings.length,
                         itemBuilder: (context, index) {
                           return UniversalCard(
@@ -296,6 +305,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
           ],
         ),
       ),
+      )
     );
   }
 

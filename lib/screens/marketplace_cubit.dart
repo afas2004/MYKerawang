@@ -41,13 +41,13 @@ class MarketplaceState {
 
 class MarketplaceCubit extends Cubit<MarketplaceState> {
   MarketplaceCubit() : super(MarketplaceState()) {
-    _loadData();
+    loadData();
   }
 
   StreamSubscription? _subscription;
   final _supabase = Supabase.instance.client;
 
-  Future<void> _loadData() async {
+  Future<void> loadData() async {
     emit(state.copyWith(isLoading: true));
 
     // 1. FAST: Cache Load

@@ -34,7 +34,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         'shared_event_id': widget.sharedEvent?['id'],
         'tags': _selectedTag != null ? [_selectedTag] : [],
       });
-      if (mounted) Navigator.pop(context);
+      if (mounted) {
+      Navigator.pop(context, true); 
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Posted successfully!")));
+    }
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
     } finally {
@@ -57,6 +60,39 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // 1. THE REFERENCE BAR (Only if sharedEvent exists)
+          if (widget.sharedEvent != null)
+            Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest, // Grey background
+                borderRadius: BorderRadius.circular(8),
+                border: Border(
+                  left: BorderSide(color: Theme.of(context).colorScheme.primary, width: 4),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.event, size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text("Referencing Event:", style: TextStyle(fontSize: 10, color: Colors.grey)),
+                        Text(
+                          widget.sharedEvent!['title'], 
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                          maxLines: 1, 
+                          overflow: TextOverflow.ellipsis
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           TextField(
             controller: _titleCtrl,
             decoration: const InputDecoration(

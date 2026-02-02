@@ -228,7 +228,7 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                         side: BorderSide.none,
                       ),
                       Text(
-                        "RM ${(_itemData['price'] as num).toStringAsFixed(2)}",
+                        "RM ${(_itemData['price'] ?? 0).toStringAsFixed(2)}",
                         style: TextStyle(
                           fontSize: 24,
                           fontWeight: FontWeight.bold,

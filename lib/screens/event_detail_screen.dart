@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:mykerawang/widgets/linear_refresher';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:timeago/timeago.dart' as timeago;
@@ -87,16 +88,22 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final startDate = DateTime.parse(_event['start_datetime']);
-    final endDate = DateTime.parse(_event['end_datetime']);
+    final DateTime? endDate = _event['end_datetime'] != null 
+        ? DateTime.parse(_event['end_datetime']) 
+        : null;
     final gallery = List<String>.from(_event['gallery_urls'] ?? []);
 
     return Scaffold(
-      body: CustomScrollView(
-        slivers: [
-          // 1. APP BAR WITH IMAGE PREVIEW
-          SliverAppBar(
-            expandedHeight: 300,
-            pinned: true,
+      body: LinearRefresher(
+        onRefresh: _fetchEventDetails,
+        offset: 0.0,
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            // 1. APP BAR WITH IMAGE PREVIEW
+            SliverAppBar(
+              expandedHeight: 300,
+              pinned: true,
             leading: Padding(
               padding: const EdgeInsets.all(8.0),
               child: CircleAvatar(
@@ -107,25 +114,6 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                 ),
               ),
             ),
-            actions: [
-               // Share Button
-               Padding(
-                padding: const EdgeInsets.only(right: 8.0),
-                child: CircleAvatar(
-                  backgroundColor: Colors.black45,
-                  child: IconButton(
-                    icon: const Icon(Icons.ios_share, color: Colors.white),
-                    onPressed: () {
-                      // Navigate to Create Post with this event attached
-                      Navigator.push(
-                        context, 
-                        MaterialPageRoute(builder: (_) => CreatePostScreen(sharedEvent: _event))
-                      );
-                    },
-                  ),
-                ),
-              ),
-            ],
             flexibleSpace: FlexibleSpaceBar(
               background: GestureDetector(
                 onTap: () {
@@ -160,8 +148,11 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                   const SizedBox(height: 16),
 
                   // Info Rows (Date & Location)
-                  _infoRow(Icons.calendar_today, 
-                    "${DateFormat('d MMM yyyy').format(startDate)} • ${DateFormat('h:mm a').format(startDate)}", 
+                  _infoRow(
+                    Icons.calendar_today, 
+                    endDate != null
+                        ? "${DateFormat('d MMM yyyy').format(startDate)} - ${DateFormat('d MMM yyyy').format(endDate)}"
+                        : DateFormat('d MMM yyyy • h:mm a').format(startDate), // Fallback if no end date
                     theme
                   ),
                   const SizedBox(height: 12),
@@ -219,7 +210,29 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                   ],
 
                   // Description
-                  const Text("About Event", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text("About Event", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                      
+                      // THE NEW "POST" BUTTON
+                      TextButton.icon(
+                        onPressed: () {
+                          Navigator.push(
+                            context, 
+                            MaterialPageRoute(builder: (_) => CreatePostScreen(sharedEvent: _event))
+                          );
+                        },
+                        icon: const Icon(Icons.arrow_forward, size: 16),
+                        label: const Text("Post"),
+                        style: TextButton.styleFrom(
+                          foregroundColor: theme.colorScheme.primary,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap, // Removes extra padding
+                        ),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 8),
                   Text(_event['description'] ?? 'No details provided.', style: const TextStyle(fontSize: 16, height: 1.5, color: Colors.grey)),
                   
@@ -245,12 +258,28 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                   const SizedBox(height: 32),
                   const Divider(thickness: 4),
 
-                  // DISCUSSION SECTION
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 16),
-                    child: Text("Discussion", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                  // DISCUSSION HEADER ROW
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween, // <--- Pushes text left, button right
+                      children: [
+                        const Text(
+                          "Discussion", 
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)
+                        ),
+                        
+                        // RELOAD BUTTON (Cleaner Style)
+                        IconButton(
+                          icon: Icon(Icons.refresh, color: Theme.of(context).colorScheme.primary),
+                          onPressed: () {
+                            setState(() => _isLoading = true);
+                            _fetchEventDetails(); 
+                          },
+                        ),
+                      ],
+                    ),
                   ),
-                  
                   // Comments List
                   StreamBuilder<List<Map<String, dynamic>>>(
                     stream: _commentsStream(),
@@ -281,6 +310,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
             ),
           ),
         ],
+      ),
       ),
       
       // 3. BOTTOM INPUT BAR (For Comments)

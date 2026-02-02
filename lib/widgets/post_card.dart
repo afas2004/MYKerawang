@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mykerawang/screens/event_detail_screen.dart';
 import 'package:timeago/timeago.dart' as timeago; // Add 'timeago' to pubspec.yaml if missing
 
 class PostCard extends StatelessWidget {
@@ -90,25 +91,66 @@ class PostCard extends StatelessWidget {
                   style: TextStyle(color: theme.colorScheme.onSurfaceVariant, height: 1.4),
                 ),
               
-              // 4. SHARED EVENT (If any)
-              if (post['shared_event_id'] != null)
-                Container(
-                  margin: const EdgeInsets.only(top: 12),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainer,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: theme.dividerColor.withOpacity(0.1)),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.event, size: 20, color: theme.colorScheme.primary),
-                      const SizedBox(width: 8),
-                      const Expanded(
-                        child: Text("Shared an Event", style: TextStyle(fontWeight: FontWeight.w600)),
-                      ),
-                      Icon(Icons.chevron_right, color: theme.colorScheme.onSurfaceVariant),
-                    ],
+              // 4. SHARED EVENT CARD (Smart Version)
+              // We check if 'events' (the joined table) is not null
+              if (post['events'] != null) 
+                GestureDetector(
+                  onTap: () { Navigator.push(context, MaterialPageRoute(builder: (_) => EventDetailScreen(event: post['events'])));
+                  },
+                  child: Container(
+                    margin: const EdgeInsets.only(top: 12),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surface, // Lighter background
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: theme.dividerColor.withOpacity(0.5)),
+                    ),
+                    child: Row(
+                      children: [
+                        // Small Event Image
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: Container(
+                            width: 60,
+                            height: 60,
+                            color: Colors.grey[200],
+                            child: post['events']['image_url'] != null
+                                ? Image.network(post['events']['image_url'], fit: BoxFit.cover)
+                                : Icon(Icons.event, color: theme.colorScheme.primary),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        
+                        // Event Details
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "REFERENCING EVENT",
+                                style: TextStyle(
+                                  fontSize: 10, 
+                                  fontWeight: FontWeight.bold, 
+                                  color: theme.colorScheme.primary
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                post['events']['title'] ?? "Unknown Event",
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                maxLines: 1, 
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              Text(
+                                "Tap to view details",
+                                style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Icon(Icons.chevron_right, color: Colors.grey),
+                      ],
+                    ),
                   ),
                 ),
 

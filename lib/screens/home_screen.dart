@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mykerawang/screens/create_event_screen.dart';
 import 'package:mykerawang/screens/create_listing_screen.dart';
 import 'package:mykerawang/screens/post_detail_screen.dart';
+import 'package:mykerawang/widgets/linear_refresher';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../widgets/universal_card.dart';
 import '../widgets/post_card.dart';
@@ -52,10 +53,10 @@ class _HomeScreenState extends State<HomeScreen> {
           .order('created_at', ascending: false)
           .limit(8);
 
-      // 3. Fetch Posts (Vertical Feed)
+      // 3. Fetch Posts and linked Events
       // We also mix in a few events/listings into the feed for variety
       final posts = await _supabase.from('posts')
-          .select()
+          .select('*, events(*)')
           .order('created_at', ascending: false)
           .limit(20);
 
@@ -83,6 +84,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final double topPadding = MediaQuery.of(context).padding.top + kToolbarHeight;
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       // FAB for "Functional" Creation
@@ -91,12 +93,16 @@ class _HomeScreenState extends State<HomeScreen> {
         backgroundColor: Theme.of(context).colorScheme.primary,
         child: Icon(Icons.add, color: Theme.of(context).colorScheme.onPrimary),
       ),
-      body: CustomScrollView(
-        slivers: [
-          // 1. APP BAR
-          SliverAppBar(
-            floating: true,
-            snap: true,
+      body: LinearRefresher(
+        onRefresh: _fetchFeedData,
+        offset: topPadding,
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            // 1. APP BAR
+            SliverAppBar(
+              floating: true,
+              snap: true,
             title: const Text("MYKerawang", style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 0.5)),
             centerTitle: false,
             actions: [
@@ -204,6 +210,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
         ],
       ),
+      )
     );
   }
 
