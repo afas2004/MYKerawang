@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:mykerawang/screens/edit_profile_screen.dart';
 import 'package:mykerawang/screens/event_detail_screen.dart';
+import 'package:mykerawang/screens/image_preview_screen.dart';
 import 'package:mykerawang/widgets/linear_refresher';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:qr_flutter/qr_flutter.dart'; 
@@ -8,6 +9,7 @@ import '../widgets/universal_card.dart';
 import '../widgets/post_card.dart';
 import 'settings_screen.dart';
 import 'item_detail_screen.dart'; // Needed for navigation
+import 'package:mobile_scanner/mobile_scanner.dart';
 
 class ProfileScreen extends StatefulWidget {
   final String? userId; 
@@ -103,21 +105,59 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     showDialog(
       context: context,
       builder: (ctx) => Dialog(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text("Scan to Follow", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-              const SizedBox(height: 20),
-              QrImageView(
-                data: "mykerawang://user/${widget.userId ?? _supabase.auth.currentUser?.id}",
-                version: QrVersions.auto,
-                size: 200.0,
-              ),
-              const SizedBox(height: 20),
-              Text("@${_profile?['username'] ?? 'user'}", style: const TextStyle(color: Colors.grey)),
-            ],
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        child: DefaultTabController(
+          length: 2,
+          child: SizedBox(
+            height: 450,
+            child: Column(
+              children: [
+                const TabBar(
+                  tabs: [Tab(text: "My Code"), Tab(text: "Scan")],
+                ),
+                Expanded(
+                  child: TabBarView(
+                    children: [
+                      // TAB 1: MY CODE
+                      Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          QrImageView(
+                            data: "mykerawang://user/${widget.userId ?? _supabase.auth.currentUser?.id}",
+                            version: QrVersions.auto,
+                            size: 200.0,
+                            // Point 7: Adapt color to theme
+                            eyeStyle: QrEyeStyle(eyeShape: QrEyeShape.square, color: Theme.of(context).primaryColor),
+                          ),
+                          const SizedBox(height: 20),
+                          Text("@${_profile?['username']}", style: const TextStyle(fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                      
+                      // TAB 2: SCANNER
+                      ClipRRect(
+                        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
+                        child: MobileScanner(
+                          onDetect: (capture) {
+                            final List<Barcode> barcodes = capture.barcodes;
+                            for (final barcode in barcodes) {
+                              if (barcode.rawValue != null) {
+                                final code = barcode.rawValue!;
+                                if (code.startsWith("mykerawang://user/")) {
+                                  final userId = code.split("/").last;
+                                  Navigator.pop(ctx); // Close dialog
+                                  Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: userId)));
+                                }
+                              }
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -156,15 +196,25 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
               child: Column(
                 children: [
                   // Avatar
-                  CircleAvatar(
-                    radius: 40,
-                    backgroundImage: _profile!['avatar_url'] != null 
-                        ? NetworkImage(_profile!['avatar_url']) 
-                        : null,
-                    backgroundColor: theme.colorScheme.primaryContainer,
-                    child: _profile!['avatar_url'] == null 
-                        ? Text(_profile!['display_name']?[0] ?? "U", style: const TextStyle(fontSize: 30)) 
-                        : null,
+                  GestureDetector(
+                    onTap: () {
+                      if (_profile!['avatar_url'] != null) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => ImagePreviewScreen(imageUrl: _profile!['avatar_url'])),
+                        );
+                      }
+                    },
+                    child: CircleAvatar(
+                        radius: 40,
+                        backgroundImage: _profile!['avatar_url'] != null 
+                            ? NetworkImage(_profile!['avatar_url']) 
+                            : null,
+                        backgroundColor: theme.colorScheme.primaryContainer,
+                        child: _profile!['avatar_url'] == null 
+                            ? Text(_profile!['display_name']?[0] ?? "U", style: const TextStyle(fontSize: 30)) 
+                            : null,
+                      ),
                   ),
                   const SizedBox(height: 12),
                   
@@ -196,8 +246,8 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
                       _statItem("Posts", "${_userPosts.length}"),
-                      _statItem("Selling", "${_userListings.length}"), // <--- NEW: Selling Count
-                      _statItem("Followers", "${_profile!['followers_count'] ?? 0}"),
+                      _statItem("Followers", "${_profile!['followers_count'] ?? 0}"), // Real DB count
+                      _statItem("Following", "${_profile!['following_count'] ?? 0}"), // Real DB count
                     ],
                   ),
                   const SizedBox(height: 20),
@@ -261,44 +311,15 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                         },
                       ),
                   
-                  // Tab 2: Events
+                  // Tab 2: Events - SWITCH TO GRID
                   _userEvents.isEmpty 
                     ? const Center(child: Text("No events hosted"))
-                    : ListView.builder(
-                        padding: const EdgeInsets.all(16),
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        itemCount: _userEvents.length,
-                        itemBuilder: (context, index) {
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
-                            child: UniversalCard(
-                              data: _userEvents[index], 
-                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => EventDetailScreen(event: _userEvents[index]))) // Use Event Detail if available
-                            ),
-                          );
-                        },
-                      ),
-
-                  // Tab 3: Shop (Listings) <--- NEW LISTVIEW
+                    : _buildPhotoGrid(_userEvents, true), // <--- USE YOUR FUNCTION HERE
+                    
+                  // Tab 3: Shop - SWITCH TO GRID
                   _userListings.isEmpty
                     ? const Center(child: Text("Not selling anything"))
-                    : GridView.builder( // Use Grid for items looks better
-                        padding: const EdgeInsets.all(14),
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          childAspectRatio: 0.75,
-                          crossAxisSpacing: 12,
-                          mainAxisSpacing: 12,
-                        ),
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        itemCount: _userListings.length,
-                        itemBuilder: (context, index) {
-                          return UniversalCard(
-                            data: _userListings[index], 
-                            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ItemDetailScreen(item: _userListings[index]))),
-                          );
-                        },
-                      ),
+                    : _buildPhotoGrid(_userListings, false), // <--- AND HERE
                 ],
               ),
             ),
@@ -315,6 +336,56 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
         Text(count, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
         Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
       ],
+    );
+  }
+
+  // Helper Widget for Insta-Grid
+  Widget _buildPhotoGrid(List<dynamic> items, bool isEvent) {
+    return GridView.builder(
+      padding: const EdgeInsets.all(2),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3, // 3 across like Instagram
+        crossAxisSpacing: 2,
+        mainAxisSpacing: 2,
+      ),
+      itemCount: items.length,
+      itemBuilder: (context, index) {
+        final item = items[index];
+        return GestureDetector(
+          onTap: () {
+            // Navigate to details
+            if (isEvent) {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => EventDetailScreen(event: item)));
+            } else {
+              // Check type (Listing vs Post) if mixed, otherwise assume Listing
+              Navigator.push(context, MaterialPageRoute(builder: (_) => ItemDetailScreen(item: item)));
+            }
+          },
+          onLongPress: () {
+            // Point 5: "Pop up details" - Simple implementation is a SnackBar or Dialog
+            showDialog(
+              context: context,
+              builder: (_) => Dialog(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Image.network(item['image_url'], height: 200, fit: BoxFit.cover),
+                    Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Text(item['title'] ?? "No Title", style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+          child: Image.network(
+            item['image_url'] ?? '', // Ensure your posts/events have image_url
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => Container(color: Colors.grey[300], child: const Icon(Icons.image_not_supported)),
+          ),
+        );
+      },
     );
   }
 }

@@ -46,6 +46,9 @@ dependencies:
   timeago: ^3.7.1
   qr_flutter: ^4.1.0
   custom_refresh_indicator: ^4.0.1
+  mobile_scanner: ^7.1.4
+  flutter_image_compress: ^2.4.0
+  path_provider: ^2.1.5
 
 dev_dependencies:
   flutter_test:

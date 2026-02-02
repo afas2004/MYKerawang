@@ -68,7 +68,7 @@ class EventsCubit extends Cubit<EventsState> {
         .from('events')
         .stream(primaryKey: ['id'])
         .gte('end_datetime', nowStr) // Only show future events
-        .order('start_datetime')
+        .order('created_at', ascending: false)
         .listen((data) async {
           final items = List<Map<String, dynamic>>.from(data);
           

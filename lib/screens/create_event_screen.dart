@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
+import '../utils/image_compressor.dart'; // Ensure this exists from previous step
+import 'gallery_view_screen.dart'; // Ensure this exists
 
 class CreateEventScreen extends StatefulWidget {
   final Map<String, dynamic>? eventToEdit; 
@@ -13,17 +15,21 @@ class CreateEventScreen extends StatefulWidget {
 }
 
 class _CreateEventScreenState extends State<CreateEventScreen> {
+  final _formKey = GlobalKey<FormState>();
+
   late TextEditingController _titleController;
   late TextEditingController _locationController;
   late TextEditingController _descController;
+  late TextEditingController _linkController;
   
   DateTime? _startDate;
-  DateTime? _endDate; // NEW: Added End Date
-  
-  File? _imageFile;
-  String? _existingImageUrl;
+  DateTime? _endDate;
   bool _isLoading = false;
   bool _isPublic = true;
+  
+  // UNIFIED MEDIA LIST (Stores both Strings (URLs) and Files)
+  // Index 0 is ALWAYS the Cover Photo.
+  final List<dynamic> _mediaItems = [];
   
   final List<String> _availableTags = ['Academic', 'Tech', 'Food', 'Fun', 'Sports', 'Workshop', 'Arts'];
   List<String> _selectedTags = [];
@@ -36,108 +42,79 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
     _titleController = TextEditingController(text: event?['title'] ?? '');
     _locationController = TextEditingController(text: event?['location'] ?? '');
     _descController = TextEditingController(text: event?['description'] ?? '');
+    _linkController = TextEditingController(text: event?['registration_link'] ?? '');
     
     if (event != null) {
       _startDate = DateTime.parse(event['start_datetime']).toLocal();
-      // Load End Date or default to Start + 2 hours
       _endDate = event['end_datetime'] != null 
           ? DateTime.parse(event['end_datetime']).toLocal() 
           : _startDate!.add(const Duration(hours: 2));
-          
-      _existingImageUrl = event['image_url'];
       _isPublic = event['is_public'] ?? true;
       if (event['tags'] != null) {
         _selectedTags = List<String>.from(event['tags']);
       }
+
+      // LOAD EXISTING MEDIA
+      // 1. Cover
+      if (event['image_url'] != null) {
+        _mediaItems.add(event['image_url']);
+      }
+      // 2. Gallery
+      if (event['gallery_urls'] != null) {
+        _mediaItems.addAll(List<String>.from(event['gallery_urls']));
+      }
+    } else {
+      _startDate = DateTime.now(); 
+      _endDate = DateTime.now().add(const Duration(hours: 2));
     }
   }
 
-  // Unified Date Picker Logic
-  Future<void> _pickDateTime(bool isStart) async {
-    final now = DateTime.now();
-    final initialDate = isStart 
-        ? (_startDate ?? now) 
-        : (_endDate ?? _startDate ?? now);
-        
-    final pickedDate = await showDatePicker(
-      context: context, 
-      firstDate: now.subtract(const Duration(days: 1)), // Allow slightly past for editing
-      lastDate: now.add(const Duration(days: 365)),
-      initialDate: initialDate,
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: Theme.of(context).colorScheme, // Use App Theme
-          ),
-          child: child!,
-        );
-      }
-    );
-
-    if (pickedDate != null && mounted) {
-      final pickedTime = await showTimePicker(
-        context: context, 
-        initialTime: TimeOfDay.fromDateTime(initialDate)
-      );
-      
-      if (pickedTime != null) {
-        final finalDateTime = DateTime(
-          pickedDate.year, pickedDate.month, pickedDate.day, 
-          pickedTime.hour, pickedTime.minute
-        );
-
-        setState(() {
-          if (isStart) {
-            _startDate = finalDateTime;
-            // Smart UX: If End Date is missing or before Start Date, auto-fix it
-            if (_endDate == null || _endDate!.isBefore(_startDate!)) {
-              _endDate = _startDate!.add(const Duration(hours: 2));
-            }
-          } else {
-            // Validation: End Date cannot be before Start Date
-            if (_startDate != null && finalDateTime.isBefore(_startDate!)) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: const Text('End time cannot be before Start time'),
-                  backgroundColor: Theme.of(context).colorScheme.error,
-                )
-              );
-              return;
-            }
-            _endDate = finalDateTime;
-          }
-        });
-      }
-    }
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _locationController.dispose();
+    _descController.dispose();
+    _linkController.dispose();
+    super.dispose();
   }
 
+  // --- NEW: UNIFIED PICKER LOGIC ---
   Future<void> _pickImage(ImageSource source) async {
+    final picker = ImagePicker();
     try {
-      final picker = ImagePicker();
-      final pickedFile = await picker.pickImage(source: source);
-      if (pickedFile != null) {
-        setState(() => _imageFile = File(pickedFile.path));
+      if (source == ImageSource.camera) {
+        final XFile? picked = await picker.pickImage(source: ImageSource.camera);
+        if (picked != null) {
+          setState(() => _mediaItems.add(File(picked.path)));
+        }
+      } else {
+        // Multi-picker for Gallery
+        final List<XFile> pickedList = await picker.pickMultiImage();
+        if (pickedList.isNotEmpty) {
+          setState(() {
+            _mediaItems.addAll(pickedList.map((x) => File(x.path)));
+          });
+        }
       }
     } catch (e) {
       debugPrint("Error picking image: $e");
     }
   }
 
-  void _showImageOptions() {
+  void _showAddOptions() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       builder: (_) => SafeArea(
         child: Wrap(
           children: [
             ListTile(
-              leading: Icon(Icons.photo_camera, color: Theme.of(context).colorScheme.primary),
+              leading: const Icon(Icons.photo_camera),
               title: const Text('Take Photo'),
               onTap: () { Navigator.pop(context); _pickImage(ImageSource.camera); },
             ),
             ListTile(
-              leading: Icon(Icons.photo_library, color: Theme.of(context).colorScheme.primary),
-              title: const Text('Choose from Gallery'),
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Select from Gallery'),
               onTap: () { Navigator.pop(context); _pickImage(ImageSource.gallery); },
             ),
           ],
@@ -146,47 +123,58 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
     );
   }
 
+  // --- SUBMIT LOGIC (SMART SORTING) ---
   Future<void> _submit() async {
-    if (_titleController.text.isEmpty || _startDate == null || _endDate == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Please fill title and dates'),
-          backgroundColor: Theme.of(context).colorScheme.error,
-        )
-      );
+    if (!_formKey.currentState!.validate()) return;
+    if (_mediaItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please add at least one photo (Cover)")));
       return;
     }
-    
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
 
     setState(() => _isLoading = true);
+    final user = Supabase.instance.client.auth.currentUser;
+    final supabase = Supabase.instance.client;
 
     try {
-      final supabase = Supabase.instance.client;
-      String? imageUrl = _existingImageUrl;
-      
-      if (_imageFile != null) {
-        // Simple compression by extension (Use standard jpg/png)
-        final fileExt = _imageFile!.path.split('.').last;
-        final path = 'events/${DateTime.now().millisecondsSinceEpoch}.$fileExt';
-        await supabase.storage.from('images').upload(path, _imageFile!);
-        imageUrl = supabase.storage.from('images').getPublicUrl(path);
+      String? finalCoverUrl;
+      List<String> finalGalleryUrls = [];
+
+      // Loop through all items and process them
+      for (int i = 0; i < _mediaItems.length; i++) {
+        final item = _mediaItems[i];
+        String url;
+
+        if (item is File) {
+          // It's a new file: Compress -> Upload
+          final compressed = await ImageCompressor.compress(item);
+          final path = 'events/${DateTime.now().millisecondsSinceEpoch}_$i.jpg';
+          await supabase.storage.from('images').upload(path, compressed);
+          url = supabase.storage.from('images').getPublicUrl(path);
+        } else {
+          // It's already a URL
+          url = item as String;
+        }
+
+        // Assign first item to Cover, rest to Gallery
+        if (i == 0) {
+          finalCoverUrl = url;
+        } else {
+          finalGalleryUrls.add(url);
+        }
       }
 
       final data = {
         'title': _titleController.text,
         'location': _locationController.text,
         'description': _descController.text,
-        
-        // SAVE UTC DATES
+        'registration_link': _linkController.text.isEmpty ? null : _linkController.text,
         'start_datetime': _startDate!.toUtc().toIso8601String(),
         'end_datetime': _endDate!.toUtc().toIso8601String(),
-        
-        'image_url': imageUrl,
+        'image_url': finalCoverUrl,      // Index 0
+        'gallery_urls': finalGalleryUrls, // Index 1+
         'is_public': _isPublic,
         'tags': _selectedTags,
-        'organizer_id': user.id,
+        'organizer_id': user!.id,
       };
 
       if (widget.eventToEdit != null) {
@@ -194,22 +182,11 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
       } else {
         await supabase.from('events').insert(data);
       }
+      
+      if (mounted) Navigator.pop(context, true);
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(widget.eventToEdit != null ? 'Event Updated!' : 'Event Published!'),
-            backgroundColor: Colors.green,
-          )
-        );
-        Navigator.pop(context, true); 
-      }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Theme.of(context).colorScheme.error)
-        );
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -217,154 +194,158 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final isEditing = widget.eventToEdit != null;
-    final theme = Theme.of(context); // Cache theme for cleaner code
 
     return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
-      appBar: AppBar(
-        title: Text(isEditing ? 'Edit Event' : 'Create New Event'),
-        backgroundColor: theme.scaffoldBackgroundColor,
-        elevation: 0,
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1), 
-          child: Divider(height: 1, color: theme.dividerColor.withOpacity(0.1))
-        ),
-      ),
+      appBar: AppBar(title: Text(isEditing ? 'Edit Event' : 'Create Event')),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _label("Event Title"),
-            _input(_titleController, "Enter a catchy title"),
-            
-            // --- DATE ROW (START & END) ---
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              child: Row(
-                children: [
-                  Expanded(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _label("Event Media", topPad: 0),
+              
+              // --- UNIFIED MEDIA GRID ---
+              if (_mediaItems.isEmpty)
+                GestureDetector(
+                  onTap: _showAddOptions,
+                  child: Container(
+                    height: 150,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceContainer,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: theme.dividerColor.withOpacity(0.2)),
+                    ),
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        _label("Starts", topPad: 0),
-                        GestureDetector(
-                          onTap: () => _pickDateTime(true),
-                          child: AbsorbPointer(
-                            child: _input(
-                              TextEditingController(text: _formatDate(_startDate)), 
-                              "Select Start", 
-                              icon: Icons.calendar_today
-                            ),
-                          ),
-                        ),
+                        Icon(Icons.add_a_photo, size: 40, color: theme.colorScheme.primary),
+                        const SizedBox(height: 8),
+                        Text("Add Photos", style: TextStyle(color: theme.colorScheme.primary, fontWeight: FontWeight.bold)),
                       ],
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _label("Ends", topPad: 0),
-                        GestureDetector(
-                          onTap: () => _pickDateTime(false),
-                          child: AbsorbPointer(
-                            child: _input(
-                              TextEditingController(text: _formatDate(_endDate)), 
-                              "Select End", 
-                              icon: Icons.event_busy
+                )
+              else
+                SizedBox(
+                  height: 140, // Height of the horizontal strip
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _mediaItems.length + 1, // +1 for "Add More" button
+                    itemBuilder: (context, index) {
+                      // "Add More" Button at the end
+                      if (index == _mediaItems.length) {
+                        return GestureDetector(
+                          onTap: _showAddOptions,
+                          child: Container(
+                            width: 100,
+                            margin: const EdgeInsets.only(right: 8),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.surfaceContainer,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: theme.dividerColor.withOpacity(0.2)),
                             ),
+                            child: const Icon(Icons.add, size: 30),
+                          ),
+                        );
+                      }
+
+                      final item = _mediaItems[index];
+                      final isCover = index == 0;
+
+                      return GestureDetector(
+                        onTap: () => _showImageMenu(index),
+                        child: Container(
+                          width: 140, // Slightly wider to show detail
+                          margin: const EdgeInsets.only(right: 8),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              // Image
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: item is File 
+                                    ? Image.file(item, fit: BoxFit.cover) 
+                                    : Image.network(item as String, fit: BoxFit.cover),
+                              ),
+                              
+                              // "Cover" Badge
+                              if (isCover)
+                                Positioned(
+                                  bottom: 0, left: 0, right: 0,
+                                  child: Container(
+                                    color: Colors.black54,
+                                    padding: const EdgeInsets.symmetric(vertical: 4),
+                                    child: const Text("COVER", textAlign: TextAlign.center, style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                  ),
+                                ),
+
+                              // Delete Button (Small X)
+                              Positioned(
+                                top: 4, right: 4,
+                                child: GestureDetector(
+                                  onTap: () => setState(() => _mediaItems.removeAt(index)),
+                                  child: const CircleAvatar(radius: 10, backgroundColor: Colors.red, child: Icon(Icons.close, size: 12, color: Colors.white)),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      ],
-                    ),
+                      );
+                    },
                   ),
-                ],
-              ),
-            ),
-            
-            _label("Location", topPad: 0),
-            _input(_locationController, "e.g. Dewan Aspirasi"),
-
-            _label("Tags"),
-            Wrap(
-              spacing: 8,
-              children: _availableTags.map((tag) {
-                final isSelected = _selectedTags.contains(tag);
-                return FilterChip(
-                  label: Text(tag),
-                  selected: isSelected,
-                  onSelected: (bool selected) {
-                    setState(() {
-                      selected ? _selectedTags.add(tag) : _selectedTags.remove(tag);
-                    });
-                  },
-                  // Dynamic Colors
-                  selectedColor: theme.colorScheme.secondaryContainer,
-                  checkmarkColor: theme.colorScheme.onSecondaryContainer,
-                  backgroundColor: theme.colorScheme.surfaceContainer,
-                  labelStyle: TextStyle(
-                    color: isSelected 
-                      ? theme.colorScheme.onSecondaryContainer 
-                      : theme.colorScheme.onSurface,
-                  ),
-                  side: BorderSide.none,
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 16),
-
-            _label("Description"),
-            TextField(
-              controller: _descController,
-              maxLines: 4,
-              decoration: _inputDeco("Tell us more...", theme),
-            ),
-
-            const SizedBox(height: 20),
-            
-            _label("Event Media"),
-            GestureDetector(
-              onTap: () => _showImageOptions(),
-              child: Container(
-                height: 180,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainer,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: theme.dividerColor.withOpacity(0.2)),
-                  image: _imageFile != null 
-                      ? DecorationImage(image: FileImage(_imageFile!), fit: BoxFit.cover)
-                      : (_existingImageUrl != null 
-                          ? DecorationImage(image: NetworkImage(_existingImageUrl!), fit: BoxFit.cover) 
-                          : null),
                 ),
-                child: (_imageFile == null && _existingImageUrl == null)
-                    ? Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.add_a_photo, color: theme.colorScheme.primary, size: 40),
-                          const SizedBox(height: 8),
-                          Text("Add Event Photo", style: TextStyle(color: theme.colorScheme.primary, fontWeight: FontWeight.bold)),
-                        ],
-                      )
-                    : null,
-              ),
-            ),
+              if (_mediaItems.isNotEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text("Tip: Tap a photo to set it as Cover or View.", style: TextStyle(fontSize: 12, color: Colors.grey)),
+                ),
 
-            const SizedBox(height: 20),
-            _label("Privacy"),
-            SwitchListTile(
-              title: const Text("Public Event"),
-              subtitle: Text("Visible to everyone", style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
-              value: _isPublic,
-              activeThumbColor: theme.colorScheme.primary,
-              onChanged: (val) => setState(() => _isPublic = val),
-            ),
-            const SizedBox(height: 80), // Bottom padding for FAB/Button
-          ],
+              const SizedBox(height: 20),
+
+              // ... REST OF THE FORM (Title, Date, etc.) ...
+              _label("Event Title"),
+              _input(_titleController, "Enter a catchy title"),
+              
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Row(
+                  children: [
+                    Expanded(child: _dateSelector(true)), // Helper below
+                    const SizedBox(width: 12),
+                    Expanded(child: _dateSelector(false)), // Helper below
+                  ],
+                ),
+              ),
+
+              _label("Location", topPad: 0),
+              _input(_locationController, "e.g. Dewan Aspirasi"),
+
+              _label("Registration Link (Optional)"),
+              _input(_linkController, "https://forms.gle/...", icon: Icons.link),
+
+              _label("Description"),
+              TextField(
+                controller: _descController,
+                maxLines: 4,
+                decoration: _inputDeco("Tell us more...", theme),
+              ),
+
+              const SizedBox(height: 20),
+              _label("Privacy"),
+              SwitchListTile(
+                title: const Text("Public Event"),
+                value: _isPublic,
+                activeThumbColor: theme.colorScheme.primary,
+                onChanged: (val) => setState(() => _isPublic = val),
+              ),
+              const SizedBox(height: 80),
+            ],
+          ),
         ),
       ),
       bottomNavigationBar: Container(
@@ -373,22 +354,58 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
           color: theme.scaffoldBackgroundColor, 
           border: Border(top: BorderSide(color: theme.dividerColor.withOpacity(0.1)))
         ),
-        child: Row(
+        child: ElevatedButton.icon(
+          onPressed: _isLoading ? null : _submit,
+          icon: _isLoading 
+              ? SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: theme.colorScheme.onPrimary))
+              : const Icon(Icons.publish),
+          label: Text(_isLoading ? "Processing..." : "Publish Event"),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: theme.colorScheme.primary,
+            foregroundColor: theme.colorScheme.onPrimary,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // --- HELPER: Image Menu ---
+  void _showImageMenu(int index) {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Wrap(
           children: [
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: _isLoading ? null : _submit,
-                icon: _isLoading 
-                    ? SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: theme.colorScheme.onPrimary))
-                    : const Icon(Icons.publish),
-                label: Text(_isLoading ? "Processing..." : (isEditing ? "Save Changes" : "Publish Event")),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: theme.colorScheme.primary,
-                  foregroundColor: theme.colorScheme.onPrimary,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
+            if (index != 0) // Only show "Make Cover" if it's not already cover
+              ListTile(
+                leading: const Icon(Icons.star_border),
+                title: const Text('Set as Cover Photo'),
+                onTap: () {
+                  Navigator.pop(context);
+                  setState(() {
+                    final item = _mediaItems.removeAt(index);
+                    _mediaItems.insert(0, item); // Move to front
+                  });
+                },
               ),
+            ListTile(
+              leading: const Icon(Icons.fullscreen),
+              title: const Text('View Fullscreen'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => GalleryViewScreen(galleryItems: _mediaItems, initialIndex: index)
+                ));
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete, color: Colors.red),
+              title: const Text('Remove Photo', style: TextStyle(color: Colors.red)),
+              onTap: () {
+                Navigator.pop(context);
+                setState(() => _mediaItems.removeAt(index));
+              },
             ),
           ],
         ),
@@ -396,39 +413,69 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
     );
   }
 
-  String _formatDate(DateTime? date) {
-    if (date == null) return '';
-    return "${date.day}/${date.month} ${date.hour.toString().padLeft(2,'0')}:${date.minute.toString().padLeft(2,'0')}";
+  // --- FORM HELPERS (Date, Input) ---
+  Widget _dateSelector(bool isStart) {
+    final date = isStart ? _startDate : _endDate;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _label(isStart ? "Starts" : "Ends", topPad: 0),
+        GestureDetector(
+          onTap: () => _pickDateTime(isStart),
+          child: AbsorbPointer(
+            child: _input(TextEditingController(text: _formatDate(date)), "Select", icon: Icons.calendar_today),
+          ),
+        ),
+      ],
+    );
   }
 
+  Future<void> _pickDateTime(bool isStart) async {
+    final now = DateTime.now();
+    final initial = isStart ? (_startDate ?? now) : (_endDate ?? now);
+    
+    final d = await showDatePicker(
+      context: context, 
+      firstDate: now.subtract(const Duration(days: 365)), 
+      lastDate: now.add(const Duration(days: 365)), 
+      initialDate: initial
+    );
+    if (d == null) return;
+    
+    if (mounted) {
+      final t = await showTimePicker(context: context, initialTime: TimeOfDay.fromDateTime(initial));
+      if (t == null) return;
+      
+      setState(() {
+        final res = DateTime(d.year, d.month, d.day, t.hour, t.minute);
+        if (isStart) {
+          _startDate = res;
+          if (_endDate == null || _endDate!.isBefore(res)) _endDate = res.add(const Duration(hours: 2));
+        } else {
+          _endDate = res;
+        }
+      });
+    }
+  }
+
+  String _formatDate(DateTime? d) => d == null ? '' : "${d.day}/${d.month} ${d.hour}:${d.minute.toString().padLeft(2,'0')}";
+  
   Widget _label(String text, {double topPad = 16}) => Padding(
     padding: EdgeInsets.only(bottom: 8, top: topPad), 
     child: Text(text, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16))
   );
-  
-  Widget _input(TextEditingController ctrl, String hint, {IconData? icon}) {
-    return TextField(
-      controller: ctrl,
-      decoration: _inputDeco(hint, Theme.of(context), icon: icon),
-      readOnly: icon != null, // Make read-only if it has an icon (implies picker)
-    );
-  }
 
-  InputDecoration _inputDeco(String hint, ThemeData theme, {IconData? icon}) {
-    return InputDecoration(
-      hintText: hint,
-      suffixIcon: icon != null ? Icon(icon, color: theme.colorScheme.onSurfaceVariant) : null,
-      filled: true,
-      // Adaptive Background Color
-      fillColor: theme.colorScheme.surfaceContainer, 
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12), 
-        borderSide: BorderSide(color: theme.dividerColor.withOpacity(0.1))
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12), 
-        borderSide: BorderSide(color: theme.colorScheme.primary)
-      ),
-    );
-  }
+  Widget _input(TextEditingController c, String h, {IconData? icon}) => TextField(
+    controller: c, 
+    readOnly: icon != null,
+    decoration: _inputDeco(h, Theme.of(context), icon: icon)
+  );
+
+  InputDecoration _inputDeco(String h, ThemeData t, {IconData? icon}) => InputDecoration(
+    hintText: h, 
+    suffixIcon: icon != null ? Icon(icon) : null, 
+    filled: true, 
+    fillColor: t.colorScheme.surfaceContainer, 
+    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none)
+  );
 }

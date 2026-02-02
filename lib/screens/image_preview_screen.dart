@@ -11,6 +11,12 @@ class ImagePreviewScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 1. Determine which ImageProvider to use
+    // If we have a local file, use FileImage. Otherwise, try CachedNetworkImage.
+    final ImageProvider? provider = imageFile != null 
+        ? FileImage(imageFile!) 
+        : (imageUrl != null ? CachedNetworkImageProvider(imageUrl!) : null);
+
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -19,12 +25,17 @@ class ImagePreviewScreen extends StatelessWidget {
         elevation: 0,
       ),
       body: Center(
-        child: imageFile != null
-            ? Image.file(imageFile!)
+        child: provider == null
+            ? const Text("No Image Found", style: TextStyle(color: Colors.white))
             : PhotoView(
-                // Use CachedNetworkImageProvider for better caching & error handling
-                imageProvider: CachedNetworkImageProvider(imageUrl ?? ''),
-                // This prevents the crash if the URL is 404 or broken
+                // 2. Pass the dynamic provider here
+                imageProvider: provider,
+                
+                // 3. Min/Max Scale for zooming
+                minScale: PhotoViewComputedScale.contained,
+                maxScale: PhotoViewComputedScale.covered * 2.5,
+                
+                // 4. Error Handling (Works for both File and Network failures)
                 errorBuilder: (context, error, stackTrace) {
                   return const Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -35,7 +46,8 @@ class ImagePreviewScreen extends StatelessWidget {
                     ],
                   );
                 },
-                // Optional: Show a spinner while loading full quality
+                
+                // 5. Loading Indicator
                 loadingBuilder: (context, event) => const Center(
                   child: CircularProgressIndicator(color: Colors.white),
                 ),
