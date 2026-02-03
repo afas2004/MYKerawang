@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:mykerawang/screens/edit_profile_screen.dart';
 import 'package:mykerawang/screens/event_detail_screen.dart';
+import 'package:mykerawang/screens/follow_list_screen.dart';
 import 'package:mykerawang/screens/image_preview_screen.dart';
+import 'package:mykerawang/screens/post_detail_screen.dart';
 import 'package:mykerawang/widgets/linear_refresher';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:qr_flutter/qr_flutter.dart'; 
@@ -27,6 +29,8 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
   bool _isLoading = true;
   bool _isMe = false;
   bool _isFollowing = false;
+  int _followerCount = 0;   // <--- Add this
+  int _followingCount = 0;
   
   Map<String, dynamic>? _profile;
   List<dynamic> _userPosts = [];
@@ -53,7 +57,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
       final profileData = await _supabase.from('profiles').select().eq('id', targetUid).single();
       
       // 2. Fetch Content (Posts, Events, AND Listings)
-      final posts = await _supabase.from('posts').select().eq('user_id', targetUid).order('created_at', ascending: false);
+      final posts = await _supabase.from('posts').select('*,profiles(*), events(*), listings(*)').eq('user_id', targetUid).order('created_at', ascending: false);
       final events = await _supabase.from('events').select().eq('organizer_id', targetUid).order('start_datetime', ascending: false);
       
       // <--- NEW: Fetch Listings
@@ -61,13 +65,25 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
 
       // 3. Check Follow Status
       if (!_isMe && currentUid != null) {
-        final followCheck = await _supabase.from('follows')
+        final followCheck = await _supabase.from('followers')
             .select()
             .eq('follower_id', currentUid)
             .eq('following_id', targetUid)
             .maybeSingle();
         _isFollowing = followCheck != null;
       }
+
+      // 1. Count how many people follow THIS user
+      final followers = await _supabase
+          .from('followers')
+          .count(CountOption.exact)
+          .eq('following_id', targetUid);
+
+      // 2. Count how many people THIS user follows
+      final following = await _supabase
+          .from('followers')
+          .count(CountOption.exact)
+          .eq('follower_id', targetUid);
 
       if (mounted) {
         setState(() {
@@ -76,6 +92,8 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
           _userEvents = events.map((e) => {...e, 'type': 'event'}).toList();
           _userListings = listings.map((l) => {...l, 'type': 'listing'}).toList(); // <--- NEW
           _isLoading = false;
+          _followerCount = followers;
+          _followingCount = following;
         });
       }
     } catch (e) {
@@ -88,15 +106,33 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     final targetUid = widget.userId;
     if (currentUid == null || targetUid == null) return;
 
+    // Optimistic UI Update
     setState(() => _isFollowing = !_isFollowing); 
 
     try {
       if (_isFollowing) {
-        await _supabase.from('follows').insert({'follower_id': currentUid, 'following_id': targetUid});
+        // 1. Insert Follow Record
+        await _supabase.from('followers').insert({'follower_id': currentUid, 'following_id': targetUid});
+        
+        // 2. SEND NOTIFICATION (New!)
+        // Fetch my name first so the notification looks nice ("Fahmi followed you")
+        final myProfile = await _supabase.from('profiles').select('display_name').eq('id', currentUid).single();
+        
+        await _supabase.from('notifications').insert({
+          'user_id': targetUid,      // Send TO target
+          'actor_id': currentUid,    // From ME
+          'type': 'follow',
+          'title': 'New Follower',
+          'body': '${myProfile['display_name']} started following you.',
+          'data': {}, // No extra data needed for follow
+        });
+
       } else {
-        await _supabase.from('follows').delete().match({'follower_id': currentUid, 'following_id': targetUid});
+        // Unfollow
+        await _supabase.from('followers').delete().match({'follower_id': currentUid, 'following_id': targetUid});
       }
     } catch (e) {
+      // Revert if error
       setState(() => _isFollowing = !_isFollowing); 
     }
   }
@@ -286,15 +322,26 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                       child: Text(_profile!['bio'], textAlign: TextAlign.center, style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
                     ),
 
-                  const SizedBox(height: 16),
 
                   // Stats Row
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      _statItem("Posts", "${_userPosts.length}"),
-                      _statItem("Followers", "${_profile!['followers_count'] ?? 0}"), // Real DB count
-                      _statItem("Following", "${_profile!['following_count'] ?? 0}"), // Real DB count
+                      _statItem("Posts", "${_userPosts.length}"), // No tap for posts
+                      
+                      // Followers Tap
+                      _statItem(
+                        "Followers", 
+                        "$_followerCount", 
+                        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => FollowListScreen(userId: widget.userId ?? _supabase.auth.currentUser!.id, type: 'followers')))
+                      ),
+                      
+                      // Following Tap
+                      _statItem(
+                        "Following", 
+                        "$_followingCount",
+                        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => FollowListScreen(userId: widget.userId ?? _supabase.auth.currentUser!.id, type: 'following')))
+                      ),
                     ],
                   ),
                   const SizedBox(height: 20),
@@ -351,10 +398,15 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                     ? const Center(child: Text("No posts yet"))
                     : ListView.builder(
                         padding: const EdgeInsets.all(16),
-                        physics: const AlwaysScrollableScrollPhysics(),
                         itemCount: _userPosts.length,
                         itemBuilder: (context, index) {
-                          return PostCard(post: _userPosts[index], onTap: () {});
+                          return PostCard(
+                            post: _userPosts[index],
+                            showProfileHeader: false, // remove profile header in post card
+                            onTap: () { 
+                              Navigator.push(context, MaterialPageRoute(builder: (_) => PostDetailScreen(post: _userPosts[index]))); 
+                            },
+                          );
                         },
                       ),
                   
@@ -377,12 +429,15 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     );
   }
 
-  Widget _statItem(String label, String count) {
-    return Column(
-      children: [
-        Text(count, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-        Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-      ],
+  Widget _statItem(String label, String count, {VoidCallback? onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        children: [
+          Text(count, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+        ],
+      ),
     );
   }
 

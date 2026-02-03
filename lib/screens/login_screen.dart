@@ -45,7 +45,7 @@ class _LoginScreenState extends State<LoginScreen> {
             // Handle Navigation on Success
             if (state.isSuccess) {
               Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => const MainScaffold()),
+                MaterialPageRoute(builder: (_) => const AuthGate()), // <--- Point to AuthGate
                 (route) => false,
               );
             }
@@ -134,6 +134,22 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                       ),
                     ),
+                    const SizedBox(height: 24),
+                    
+                    // GOOGLE BUTTON
+                    OutlinedButton.icon(
+                      onPressed: state.isLoading 
+                          ? null 
+                          : () => context.read<LoginCubit>().signInWithGoogle(),
+                      icon: const Icon(Icons.g_mobiledata, size: 28), // Or use a Google Logo asset
+                      label: const Text("Continue with Google"),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        minimumSize: const Size(double.infinity, 50),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                    
                     const SizedBox(height: 16),
                     TextButton(
                       // Call Cubit to toggle mode

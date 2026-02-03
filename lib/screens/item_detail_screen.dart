@@ -1,10 +1,13 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:mykerawang/services/share_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:url_launcher/url_launcher.dart'; // Add this to pubspec.yaml
-import 'create_listing_screen.dart'; // Ensure this matches your filename
+import 'package:url_launcher/url_launcher.dart'; 
+import 'create_listing_screen.dart'; 
+import 'create_post_screen.dart'; // Ensure this exists
 import 'profile_screen.dart'; 
-import 'image_preview_screen.dart'; 
+import 'gallery_view_screen.dart';
 
 class ItemDetailScreen extends StatefulWidget {
   final Map<String, dynamic> item;
@@ -19,6 +22,7 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
   late Map<String, dynamic> _itemData;
   Map<String, dynamic>? _sellerProfile;
   bool _isLoading = true;
+  int _currentImageIndex = 0; 
 
   @override
   void initState() {
@@ -38,10 +42,10 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
           .eq('id', _itemData['id'])
           .single();
 
-      // 2. Fetch Seller Profile (needed for WhatsApp/QR)
+      // 2. Fetch Seller Profile 
       final seller = await supabase
           .from('profiles')
-          .select() // Get everything (payment_qr_url, phone_number, etc.)
+          .select() 
           .eq('id', freshItem['seller_id'])
           .maybeSingle();
 
@@ -57,12 +61,36 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
     }
   }
 
+  // --- TOGGLE SOLD STATUS ---
+  Future<void> _toggleSoldStatus() async {
+    final currentStatus = _itemData['is_sold'] ?? false;
+    final newStatus = !currentStatus;
+
+    // Optimistic Update
+    setState(() => _itemData['is_sold'] = newStatus);
+
+    try {
+      await Supabase.instance.client
+          .from('listings')
+          .update({'is_sold': newStatus})
+          .eq('id', _itemData['id']);
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(newStatus ? "Marked as Sold" : "Marked as Available"))
+      );
+    } catch (e) {
+      // Revert if error
+      setState(() => _itemData['is_sold'] = currentStatus);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+    }
+  }
+
   Future<void> _deleteItem() async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text("Delete Item"),
-        content: const Text("Are you sure you want to delete this listing?"),
+        content: const Text("Are you sure you want to delete this listing permanently?"),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
           TextButton(
@@ -76,7 +104,7 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
       try {
         await Supabase.instance.client.from('listings').delete().eq('id', _itemData['id']);
         if (mounted) {
-          Navigator.pop(context, true); // Return true to refresh previous screen
+          Navigator.pop(context, true); 
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Listing deleted")));
         }
       } catch (e) {
@@ -131,7 +159,7 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                 icon: const Icon(Icons.chat),
                 label: const Text("Chat on WhatsApp"),
                 style: FilledButton.styleFrom(
-                  backgroundColor: Colors.green, // WhatsApp Green
+                  backgroundColor: Colors.green, 
                   padding: const EdgeInsets.symmetric(vertical: 12),
                 ),
                 onPressed: () async {
@@ -141,18 +169,27 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                     return;
                   }
 
-                  // Format number for WhatsApp API
                   final cleanPhone = phone.replaceAll(RegExp(r'\D'), '');
-                  final message = "Hi, I am interested in your item: ${_itemData['title']}";
-                  final url = Uri.parse("https://wa.me/$cleanPhone?text=${Uri.encodeComponent(message)}");
+                  String finalUrl = _itemData['image_url'] ?? '';
 
-                  if (await canLaunchUrl(url)) {
-                    await launchUrl(url, mode: LaunchMode.externalApplication);
-                  } else {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Could not open WhatsApp")));
-                    }
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Generating WhatsApp link..."), duration: Duration(seconds: 1))
+                  );
+
+                  try {
+                    final response = await http.get(Uri.parse('https://tinyurl.com/api-create.php?url=$finalUrl'));
+                    if (response.statusCode == 200) finalUrl = response.body;
+                  } catch (e) {
+                    debugPrint("Shortener failed");
                   }
+
+                  final message = 
+                      "Hai! Saya berminat dengan barang anda di *MYKerawang*.\n\n"
+                      "*Barang:* ${_itemData['title']}\n"
+                      "*Harga:* RM ${_itemData['price']}\n\n"
+                      "_Link Gambar:_ $finalUrl";
+                  
+                  ShareService.openWhatsApp(context, phone, message);
                 },
               ),
             ),
@@ -169,6 +206,12 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
   Widget build(BuildContext context) {
     final currentUser = Supabase.instance.client.auth.currentUser;
     final isOwner = currentUser != null && currentUser.id == _itemData['seller_id'];
+    final isSold = _itemData['is_sold'] == true;
+
+    final List<String> allImages = [
+      if (_itemData['image_url'] != null) _itemData['image_url'],
+      ...?(_itemData['gallery_urls'] as List?)?.cast<String>(),
+    ];
 
     return Scaffold(
       body: CustomScrollView(
@@ -187,28 +230,54 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
               ),
             ),
             flexibleSpace: FlexibleSpaceBar(
-              background: GestureDetector(
-                onTap: () {
-                  // Navigate to your existing ImagePreviewScreen
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => ImagePreviewScreen(imageUrl: _itemData['image_url'] ?? ''),
-                    ),
-                  );
-                },
-                child: Hero(
-                  tag: _itemData['id'], // Optional: Adds a nice zoom animation
-                  child: CachedNetworkImage(
-                    imageUrl: _itemData['image_url'] ?? '',
-                    fit: BoxFit.cover,
-                    placeholder: (context, url) => const Center(child: CircularProgressIndicator()),
-                    errorWidget: (context, url, error) => Container(
-                      color: Colors.grey, 
-                      child: const Icon(Icons.broken_image, color: Colors.white)
-                    ),
+              background: Stack(
+                fit: StackFit.expand,
+                children: [
+                  PageView.builder(
+                    itemCount: allImages.length,
+                    onPageChanged: (index) => setState(() => _currentImageIndex = index),
+                    itemBuilder: (context, index) {
+                      return GestureDetector(
+                        onTap: () {
+                          Navigator.push(context, MaterialPageRoute(builder: (_) => GalleryViewScreen(galleryItems: allImages, initialIndex: index)));
+                        },
+                        child: Hero(
+                          tag: index == 0 ? _itemData['id'] : "gallery_$index", 
+                          child: CachedNetworkImage(
+                            imageUrl: allImages[index],
+                            fit: BoxFit.cover,
+                            color: isSold ? Colors.grey : null,
+                            colorBlendMode: isSold ? BlendMode.saturation : null,
+                            placeholder: (_,__) => const Center(child: CircularProgressIndicator()),
+                            errorWidget: (_,__,___) => Container(color: Colors.grey, child: const Icon(Icons.broken_image, color: Colors.white)),
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                ),
+                  if (isSold)
+                    Positioned.fill(
+                      child: Container(
+                        color: Colors.black38,
+                        child: Center(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                            decoration: BoxDecoration(border: Border.all(color: Colors.white, width: 3), color: Colors.red.withOpacity(0.8)),
+                            child: const Text("SOLD", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold, letterSpacing: 4)),
+                          ),
+                        ),
+                      ),
+                    ),
+                  if (allImages.length > 1)
+                    Positioned(
+                      bottom: 16, right: 16,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(20)),
+                        child: Text("${_currentImageIndex + 1} / ${allImages.length}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
@@ -227,49 +296,36 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                         labelStyle: TextStyle(color: Theme.of(context).colorScheme.onSecondaryContainer),
                         side: BorderSide.none,
                       ),
-                      Text(
-                        "RM ${(_itemData['price'] ?? 0).toStringAsFixed(2)}",
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                      ),
+                      Text("RM ${(_itemData['price'] ?? 0).toStringAsFixed(2)}", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary)),
                     ],
                   ),
                   const SizedBox(height: 10),
-                  Text(_itemData['title'], style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                  Row(
+                    children: [
+                      Expanded(child: Text(_itemData['title'], style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold))),
+                      IconButton(
+                        icon: const CircleAvatar(backgroundColor: Colors.black45, child: Icon(Icons.share, color: Colors.white, size: 20)),
+                        onPressed: () {
+                          ShareService.shareContent(context, _itemData['title'], "Price: RM ${_itemData['price']}\n${_itemData['description'] ?? ''}", _itemData['image_url']);
+                        },
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 20),
 
-                  // SELLER CARD
                   if (_sellerProfile != null)
                     InkWell(
-                      onTap: () {
-                         // Navigate to Profile
-                         Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: _sellerProfile!['id'])));
-                      },
+                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: _sellerProfile!['id']))),
                       child: Container(
                         padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.2)),
-                          borderRadius: BorderRadius.circular(12),
-                          color: Theme.of(context).colorScheme.surfaceContainer,
-                        ),
+                        decoration: BoxDecoration(border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.2)), borderRadius: BorderRadius.circular(12), color: Theme.of(context).colorScheme.surfaceContainer),
                         child: Row(
                           children: [
-                            CircleAvatar(
-                              backgroundImage: _sellerProfile!['avatar_url'] != null
-                                  ? CachedNetworkImageProvider(_sellerProfile!['avatar_url'])
-                                  : null,
-                              child: _sellerProfile!['avatar_url'] == null ? const Icon(Icons.person) : null,
-                            ),
+                            CircleAvatar(backgroundImage: _sellerProfile!['avatar_url'] != null ? CachedNetworkImageProvider(_sellerProfile!['avatar_url']) : null, child: _sellerProfile!['avatar_url'] == null ? const Icon(Icons.person) : null),
                             const SizedBox(width: 12),
                             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                               Text(_sellerProfile!['display_name'] ?? 'Student', style: const TextStyle(fontWeight: FontWeight.bold)),
-                              Text(
-                                "View Profile",
-                                style: TextStyle(color: Theme.of(context).colorScheme.primary, fontSize: 12),
-                              ),
+                              Text("View Profile", style: TextStyle(color: Theme.of(context).colorScheme.primary, fontSize: 12)),
                             ]),
                             const Spacer(),
                             const Icon(Icons.chevron_right, color: Colors.grey),
@@ -278,8 +334,28 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                       ),
                     ),
 
-                  const SizedBox(height: 20),
-                  const Text("Description", style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 24),
+                  
+                  // --- NEW POST FUNCTION ---
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text("Description", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                      TextButton.icon(
+                        onPressed: () {
+                          // Requires updating CreatePostScreen to accept 'sharedListing'
+                          // Use a Try-Catch or ensure CreatePostScreen is updated
+                          try {
+                            Navigator.push(context, MaterialPageRoute(builder: (_) => CreatePostScreen(sharedListing: _itemData))); 
+                          } catch (e) {
+                             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please update CreatePostScreen first!")));
+                          }
+                        },
+                        icon: const Icon(Icons.arrow_forward, size: 16),
+                        label: const Text("Post"),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 8),
                   Text(_itemData['description'] ?? 'No description provided.'),
                   const SizedBox(height: 80),
@@ -289,6 +365,8 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
           )
         ],
       ),
+      
+      // --- OWNER CONTROLS ---
       bottomSheet: Container(
         padding: const EdgeInsets.all(16),
         width: double.infinity,
@@ -299,46 +377,59 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
         child: isOwner
             ? Row(
                 children: [
+                  // 1. MARK SOLD BUTTON
                   Expanded(
                     child: OutlinedButton(
-                      onPressed: _deleteItem,
+                      onPressed: _toggleSoldStatus,
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: Theme.of(context).colorScheme.error,
-                        side: BorderSide(color: Theme.of(context).colorScheme.error),
+                        // If sold: Green text (to make available), If available: Orange text (to mark sold)
+                        foregroundColor: isSold ? Colors.green : Colors.orange, 
+                        side: BorderSide(color: isSold ? Colors.green : Colors.orange),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
-                      child: const Text("Delete"),
+                      child: Text(isSold ? "Mark Available" : "Mark as Sold"),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 8),
+                  
+                  // 2. EDIT BUTTON
                   Expanded(
                     child: ElevatedButton(
                       onPressed: () async {
-                        // Navigate to CreateListingScreen in EDIT MODE
-                        final result = await Navigator.push(
-                          context, 
-                          MaterialPageRoute(
-                            builder: (_) => CreateListingScreen(itemToEdit: _itemData)
-                          )
-                        );
-                        if (result == true) {
-                          _refreshData(); // Refresh if updated
-                        }
+                        final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => CreateListingScreen(itemToEdit: _itemData)));
+                        if (result == true) _refreshData(); 
                       },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Theme.of(context).colorScheme.primary,
                         foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
                       child: const Text("Edit"),
                     ),
                   ),
+                  const SizedBox(width: 8),
+
+                  // 3. DELETE ICON (Small, beside edit)
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: IconButton(
+                      icon: const Icon(Icons.delete_outline, color: Colors.red),
+                      tooltip: "Delete Permanently",
+                      onPressed: _deleteItem,
+                    ),
+                  ),
                 ],
               )
+            // BUYER VIEW
             : ElevatedButton.icon(
-                onPressed: _showPurchaseDialog, // <--- CALLS THE NEW DIALOG
+                onPressed: isSold ? null : _showPurchaseDialog, 
                 icon: const Icon(Icons.chat),
-                label: const Text("Contact / Buy"),
+                label: Text(isSold ? "Item Sold" : "Contact / Buy"),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Theme.of(context).colorScheme.primary,
+                  backgroundColor: isSold ? Colors.grey : Theme.of(context).colorScheme.primary,
                   foregroundColor: Theme.of(context).colorScheme.onPrimary,
                   padding: const EdgeInsets.symmetric(vertical: 12),
                 ),

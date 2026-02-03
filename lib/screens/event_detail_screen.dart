@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:mykerawang/services/share_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:timeago/timeago.dart' as timeago;
@@ -24,6 +25,8 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   bool _isLoading = true;
   int _currentImageIndex = 0; 
   final _commentCtrl = TextEditingController();
+  bool _isJoined = false;       // <--- NEW: Did I join?
+  int _participantCount = 0;    // <--- NEW: Total count
 
   final List<String> _trustedDomains = [
     'uitm.edu.my', 
@@ -47,10 +50,31 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       final freshEvent = await supabase.from('events').select().eq('id', _event['id']).single();
       final organizer = await supabase.from('profiles').select().eq('id', freshEvent['organizer_id']).maybeSingle();
 
+      // 2. NEW: Fetch Participant Count
+      final count = await supabase
+          .from('event_participants')
+          .count(CountOption.exact)
+          .eq('event_id', _event['id']);
+      
+      // 3. NEW: Check if *I* already joined
+      bool amIJoined = false;
+      final userId = supabase.auth.currentUser?.id;
+      if (userId != null) {
+        final myEntry = await supabase
+            .from('event_participants')
+            .select()
+            .eq('event_id', _event['id'])
+            .eq('user_id', userId)
+            .maybeSingle();
+        amIJoined = myEntry != null;
+      }
+
       if (mounted) {
         setState(() {
           _event = freshEvent;
           _organizer = organizer;
+          _participantCount = count; // <--- Update Count
+          _isJoined = amIJoined;     // <--- Update My Status
           _isLoading = false;
         });
       }
@@ -144,6 +168,45 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
           ],
         ),
       );
+    }
+  }
+
+  Future<void> _toggleJoin() async {
+    final supabase = Supabase.instance.client;
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please login to join.")));
+      return;
+    }
+
+    // 1. Instant UI Update (Makes it feel fast)
+    setState(() {
+      _isJoined = !_isJoined;
+      _participantCount += _isJoined ? 1 : -1;
+    });
+
+    try {
+      // 2. Update Database
+      if (_isJoined) {
+        await supabase.from('event_participants').insert({
+          'event_id': _event['id'],
+          'user_id': userId,
+        });
+      } else {
+        await supabase.from('event_participants').delete().match({
+          'event_id': _event['id'],
+          'user_id': userId,
+        });
+      }
+    } catch (e) {
+      // 3. Revert if error
+      if (mounted) {
+        setState(() {
+          _isJoined = !_isJoined;
+          _participantCount += _isJoined ? 1 : -1;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+      }
     }
   }
 
@@ -294,7 +357,25 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(_event['title'], style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                    Row(
+                      children: [
+                        Expanded( child:Text(_event['title'], style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold))),
+                        IconButton(
+                          icon: const CircleAvatar(
+                            backgroundColor: Colors.black45,
+                            child: Icon(Icons.share, color: Colors.white, size: 20),
+                          ),
+                          onPressed: () {
+                            ShareService.shareContent(
+                              context, 
+                              _event['title'], 
+                              "Event Details: ${_event['description'] ?? ''}", 
+                              _event['image_url']
+                            );
+                          },
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 16),
 
                     // Date & Location Rows (Keep your existing logic)
@@ -310,6 +391,52 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                     
                     const SizedBox(height: 24),
                     const Divider(),
+
+                                        
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.1)),
+                      ),
+                      child: Row(
+                        children: [
+                          // 1. The Count
+                          Icon(Icons.group, size: 20, color: Theme.of(context).colorScheme.primary),
+                          const SizedBox(width: 8),
+                          Text("$_participantCount Attending", style: const TextStyle(fontWeight: FontWeight.bold)),
+                          
+                          const Spacer(),
+
+                          // 2. The Button (Only show if not owner)
+                          if (Supabase.instance.client.auth.currentUser?.id != _event['organizer_id'])
+                            SizedBox(
+                              height: 36,
+                              child: _isJoined
+                                  ? OutlinedButton.icon(
+                                      onPressed: _toggleJoin,
+                                      icon: const Icon(Icons.check, size: 16),
+                                      label: const Text("Joined"),
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: Colors.green,
+                                        side: const BorderSide(color: Colors.green),
+                                      ),
+                                    )
+                                  : FilledButton.icon(
+                                      onPressed: _toggleJoin,
+                                      icon: const Icon(Icons.add, size: 16),
+                                      label: const Text("Join"),
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor: Theme.of(context).colorScheme.primary,
+                                        foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                                      ),
+                                    ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
 
                     // Organizer Tile (Keep existing)
                     if (_organizer != null)

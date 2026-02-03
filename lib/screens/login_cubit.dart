@@ -81,4 +81,22 @@ class LoginCubit extends Cubit<LoginState> {
       emit(state.copyWith(isLoading: false, errorMessage: "An error occurred. Check connection."));
     }
   }
+
+  Future<void> signInWithGoogle() async {
+    emit(state.copyWith(isLoading: true, errorMessage: null));
+    try {
+      // 1. Trigger Supabase OAuth
+      // NOTE: Ensure you have "Google" enabled in Supabase Auth Providers
+      await supabase.auth.signInWithOAuth(
+        OAuthProvider.google,
+        redirectTo: 'mykerawang://login-callback', // Match this with Supabase URL settings
+      );
+      
+      // Note: OAuth flow continues outside the app usually. 
+      // When they return, AuthGate in main.dart will catch the session change.
+      // We don't strictly need to emit success here because the app will reload.
+    } catch (e) {
+      emit(state.copyWith(isLoading: false, errorMessage: "Google Sign-In failed: $e"));
+    }
+  }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
@@ -228,13 +229,25 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             const Text("Contact Details", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             const SizedBox(height: 16),
             
-            TextField(
+            TextFormField(
               controller: _phoneCtrl,
-              keyboardType: TextInputType.phone,
-              decoration: _inputDeco("WhatsApp Number").copyWith(
-                hintText: "e.g. 60123456789", 
-                prefixIcon: const Icon(Icons.phone)
+              decoration: const InputDecoration(
+                labelText: 'Phone Number',
+                hintText: 'e.g. 0123456789',
+                prefixText: '+60 ', // Visual cue
               ),
+              // 1. Show Number Pad only
+              keyboardType: TextInputType.phone, 
+              
+              // 2. BLOCK letters/symbols completely
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly, // Only allows 0-9
+                LengthLimitingTextInputFormatter(11),   // Limit length (optional)
+              ],
+              validator: (val) {
+                if (val == null || val.length < 9) return "Please enter a valid number";
+                return null;
+              },
             ),
             const SizedBox(height: 16),
             TextField(

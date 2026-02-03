@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
-import 'image_preview_screen.dart'; // Ensure this exists
+// Ensure you have this utility (or copy it from previous steps)
+import '../utils/image_compressor.dart'; 
+import 'gallery_view_screen.dart';
 
 class CreateListingScreen extends StatefulWidget {
-  final Map<String, dynamic>? itemToEdit; // NEW: Item to edit
+  final Map<String, dynamic>? itemToEdit; 
 
   const CreateListingScreen({super.key, this.itemToEdit});
 
@@ -15,30 +17,47 @@ class CreateListingScreen extends StatefulWidget {
 
 class _CreateListingScreenState extends State<CreateListingScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _supabase = Supabase.instance.client;
+  
+  // Controllers
   late TextEditingController _titleController;
   late TextEditingController _priceController;
   late TextEditingController _descriptionController;
   
+  // State
   String _category = 'Books';
   final List<String> _categories = ['Electronics', 'Books', 'Furniture', 'Clothing', 'Sports', 'Others'];
-  
-  File? _imageFile;
-  String? _existingImageUrl; // To hold old image if editing
   bool _isLoading = false;
+
+  // UNIFIED MEDIA LIST (Stores both Strings/URLs and Files)
+  // Index 0 is ALWAYS the Cover Photo.
+  final List<dynamic> _mediaItems = [];
 
   @override
   void initState() {
     super.initState();
     final item = widget.itemToEdit;
     
-    // Pre-fill logic
     _titleController = TextEditingController(text: item?['title'] ?? '');
     _priceController = TextEditingController(text: item?['price']?.toString() ?? '');
     _descriptionController = TextEditingController(text: item?['description'] ?? '');
     
     if (item != null) {
       _category = item['category'] ?? 'Books';
-      _existingImageUrl = item['image_url'];
+      
+      // LOAD EXISTING MEDIA
+      // 1. Cover
+      if (item['image_url'] != null) {
+        _mediaItems.add(item['image_url']);
+      }
+      // 2. Gallery
+      if (item['gallery_urls'] != null) {
+        final extras = List<String>.from(item['gallery_urls']);
+        // Avoid duplicates if cover is also in gallery list
+        for (var url in extras) {
+          if (!_mediaItems.contains(url)) _mediaItems.add(url);
+        }
+      }
     }
   }
 
@@ -50,19 +69,29 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
     super.dispose();
   }
 
+  // --- 1. UNIFIED PICKER LOGIC ---
   Future<void> _pickImage(ImageSource source) async {
+    final picker = ImagePicker();
     try {
-      final picker = ImagePicker();
-      final pickedFile = await picker.pickImage(source: source);
-      if (pickedFile != null) {
-        setState(() => _imageFile = File(pickedFile.path));
+      if (source == ImageSource.camera) {
+        final XFile? picked = await picker.pickImage(source: ImageSource.camera);
+        if (picked != null) {
+          setState(() => _mediaItems.add(File(picked.path)));
+        }
+      } else {
+        final List<XFile> pickedList = await picker.pickMultiImage();
+        if (pickedList.isNotEmpty) {
+          setState(() {
+            _mediaItems.addAll(pickedList.map((x) => File(x.path)));
+          });
+        }
       }
     } catch (e) {
       debugPrint("Error picking image: $e");
     }
   }
 
-  void _showImageOptions() {
+  void _showAddOptions() {
     showModalBottomSheet(
       context: context,
       builder: (_) => SafeArea(
@@ -70,12 +99,12 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
           children: [
             ListTile(
               leading: const Icon(Icons.photo_camera),
-              title: const Text('Camera'),
+              title: const Text('Take Photo'),
               onTap: () { Navigator.pop(context); _pickImage(ImageSource.camera); },
             ),
             ListTile(
               leading: const Icon(Icons.photo_library),
-              title: const Text('Gallery'),
+              title: const Text('Select from Gallery'),
               onTap: () { Navigator.pop(context); _pickImage(ImageSource.gallery); },
             ),
           ],
@@ -84,67 +113,122 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
     );
   }
 
+  // --- 2. UPLOAD LOGIC ---
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('You must be logged in.')));
+    if (_mediaItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please add at least 1 photo.')));
       return;
     }
+
+    final user = _supabase.auth.currentUser;
+    if (user == null) return;
 
     setState(() => _isLoading = true);
 
     try {
-      final supabase = Supabase.instance.client;
-      String? imageUrl = _existingImageUrl; // Default to old image
-      
-      // If new image picked, upload it
-      if (_imageFile != null) {
-        final fileExt = _imageFile!.path.split('.').last;
-        final fileName = '${DateTime.now().millisecondsSinceEpoch}.$fileExt';
-        final path = 'listings/$fileName';
-        
-        await supabase.storage.from('images').upload(path, _imageFile!);
-        imageUrl = supabase.storage.from('images').getPublicUrl(path);
-      }
+      String? finalCoverUrl;
+      List<String> finalGalleryUrls = [];
 
+      // Loop and Process
+      for (int i = 0; i < _mediaItems.length; i++) {
+        final item = _mediaItems[i];
+        String url;
+
+        if (item is File) {
+          // Compress & Upload
+          final compressed = await ImageCompressor.compress(item);
+          final path = 'listings/${DateTime.now().millisecondsSinceEpoch}_$i.jpg';
+          await _supabase.storage.from('images').upload(path, compressed);
+          url = _supabase.storage.from('images').getPublicUrl(path);
+        } else {
+          // Already a URL
+          url = item as String;
+        }
+
+        if (i == 0) {
+          finalCoverUrl = url;
+        } else {
+          finalGalleryUrls.add(url);
+        }
+      }
+      
       final data = {
         'seller_id': user.id,
-        'title': _titleController.text,
+        'title': _titleController.text.trim(),
         'price': double.parse(_priceController.text),
         'category': _category,
-        'description': _descriptionController.text,
-        'image_url': imageUrl,
+        'description': _descriptionController.text.trim(),
+        'image_url': finalCoverUrl,      // Index 0
+        'gallery_urls': finalGalleryUrls, // Index 1+
         'fulfillment_type': 'Pickup',
       };
 
       if (widget.itemToEdit != null) {
-        // UPDATE Existing
-        await supabase.from('listings').update(data).eq('id', widget.itemToEdit!['id']);
+        await _supabase.from('listings').update(data).eq('id', widget.itemToEdit!['id']);
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Listing Updated!')));
       } else {
-        // INSERT New
-        await supabase.from('listings').insert(data);
+        await _supabase.from('listings').insert(data);
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Listing Published!')));
       }
 
-      if (mounted) {
-        Navigator.pop(context, true); // Return true to trigger refresh
-      }
+      if (mounted) Navigator.pop(context, true); 
+
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
+  // --- 3. UI HELPER: IMAGE MENU ---
+  void _showImageMenu(int index) {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Wrap(
+          children: [
+            if (index != 0)
+              ListTile(
+                leading: const Icon(Icons.star_border),
+                title: const Text('Set as Cover Photo'),
+                onTap: () {
+                  Navigator.pop(context);
+                  setState(() {
+                    final item = _mediaItems.removeAt(index);
+                    _mediaItems.insert(0, item);
+                  });
+                },
+              ),
+            ListTile(
+              leading: const Icon(Icons.fullscreen),
+              title: const Text('View Fullscreen'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => GalleryViewScreen(galleryItems: _mediaItems, initialIndex: index)
+                ));
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete, color: Colors.red),
+              title: const Text('Remove Photo', style: TextStyle(color: Colors.red)),
+              onTap: () {
+                Navigator.pop(context);
+                setState(() => _mediaItems.removeAt(index));
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final primaryColor = Theme.of(context).colorScheme.primary;
     final isEditing = widget.itemToEdit != null;
+    final theme = Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(title: Text(isEditing ? 'Edit Listing' : 'Sell Item')),
@@ -155,31 +239,127 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // --- UNIFIED MEDIA GRID ---
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text("Photos", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              ),
+              if (_mediaItems.isEmpty)
+                GestureDetector(
+                  onTap: _showAddOptions,
+                  child: Container(
+                    height: 150,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceContainer,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: theme.dividerColor.withOpacity(0.2)),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.add_a_photo, size: 40, color: theme.colorScheme.primary),
+                        const SizedBox(height: 8),
+                        Text("Add Photos", style: TextStyle(color: theme.colorScheme.primary, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                SizedBox(
+                  height: 140,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _mediaItems.length + 1,
+                    itemBuilder: (context, index) {
+                      // "Add More" Button at the end
+                      if (index == _mediaItems.length) {
+                        return GestureDetector(
+                          onTap: _showAddOptions,
+                          child: Container(
+                            width: 100,
+                            margin: const EdgeInsets.only(right: 8),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.surfaceContainer,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: theme.dividerColor.withOpacity(0.2)),
+                            ),
+                            child: const Icon(Icons.add, size: 30),
+                          ),
+                        );
+                      }
+
+                      final item = _mediaItems[index];
+                      final isCover = index == 0;
+
+                      return GestureDetector(
+                        onTap: () => _showImageMenu(index),
+                        child: Container(
+                          width: 140,
+                          margin: const EdgeInsets.only(right: 8),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: item is File 
+                                    ? Image.file(item, fit: BoxFit.cover) 
+                                    : Image.network(item as String, fit: BoxFit.cover),
+                              ),
+                              if (isCover)
+                                Positioned(
+                                  bottom: 0, left: 0, right: 0,
+                                  child: Container(
+                                    color: Colors.black54,
+                                    padding: const EdgeInsets.symmetric(vertical: 4),
+                                    child: const Text("COVER", textAlign: TextAlign.center, style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                  ),
+                                ),
+                              Positioned(
+                                top: 4, right: 4,
+                                child: GestureDetector(
+                                  onTap: () => setState(() => _mediaItems.removeAt(index)),
+                                  child: const CircleAvatar(radius: 10, backgroundColor: Colors.red, child: Icon(Icons.close, size: 12, color: Colors.white)),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                
+              if (_mediaItems.isNotEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8, bottom: 20),
+                  child: Text("Tip: Tap a photo to set it as Cover.", style: TextStyle(fontSize: 12, color: Colors.grey)),
+                ),
+              SizedBox(height: 12),
+
+              // --- FORM FIELDS ---
               TextFormField(
                 controller: _titleController,
-                decoration: const InputDecoration(labelText: 'Title', hintText: 'e.g. Pre-loved Textbook'),
+                decoration: const InputDecoration(labelText: 'Title', hintText: 'e.g. Pre-loved Textbook', border: OutlineInputBorder()),
                 validator: (v) => v!.isEmpty ? 'Required' : null,
               ),
               const SizedBox(height: 16),
+              
               Row(
                 children: [
                   Expanded(
                     child: TextFormField(
                       controller: _priceController,
-                      decoration: const InputDecoration(labelText: 'Price (RM)', hintText: '0.00'),
+                      decoration: const InputDecoration(labelText: 'Price (RM)', prefixText: 'RM ', border: OutlineInputBorder()),
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      validator: (v) {
-                        if (v == null || v.isEmpty) return 'Required';
-                        if (double.tryParse(v) == null) return 'Invalid number';
-                        return null;
-                      },
+                      validator: (v) => (v == null || double.tryParse(v) == null) ? 'Invalid' : null,
                     ),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
                     child: DropdownButtonFormField<String>(
-                      initialValue: _category,
-                      decoration: const InputDecoration(labelText: 'Category'),
+                      value: _category,
+                      decoration: const InputDecoration(labelText: 'Category', border: OutlineInputBorder()),
                       items: _categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
                       onChanged: (v) => setState(() => _category = v!),
                     ),
@@ -187,106 +367,34 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                 ],
               ),
               const SizedBox(height: 16),
+              
               TextFormField(
                 controller: _descriptionController,
-                maxLines: 4,
-                decoration: const InputDecoration(labelText: 'Description', alignLabelWithHint: true),
+                maxLines: 5,
+                decoration: const InputDecoration(labelText: 'Description', alignLabelWithHint: true, border: OutlineInputBorder()),
+                validator: (v) => v!.isEmpty ? 'Required' : null,
               ),
-              const SizedBox(height: 24),
-              
-              const Text("Photos", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              const SizedBox(height: 8),
-              
-              GestureDetector(
-                onTap: () {
-                  // 1. If empty, open picker
-                  if (_imageFile == null && _existingImageUrl == null) {
-                    _showImageOptions();
-                  } 
-                  // 2. If image exists, PREVIEW IT
-                  else {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => Scaffold(
-                          appBar: AppBar(
-                            backgroundColor: Colors.black,
-                            iconTheme: const IconThemeData(color: Colors.white),
-                          ),
-                          backgroundColor: Colors.black,
-                          body: Center(
-                            child: _imageFile != null
-                                ? Image.file(_imageFile!) // Preview local file
-                                : Image.network(_existingImageUrl!), // Preview URL
-                          ),
-                        ),
-                      ),
-                    );
-                  }
-                },
-                child: Container(
-                  height: 200,
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade200,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade300, style: BorderStyle.solid),
-                    image: _imageFile != null 
-                        ? DecorationImage(image: FileImage(_imageFile!), fit: BoxFit.cover)
-                        : (_existingImageUrl != null 
-                            ? DecorationImage(image: NetworkImage(_existingImageUrl!), fit: BoxFit.cover)
-                            : null),
-                  ),
-                  child: (_imageFile == null && _existingImageUrl == null)
-                      ? Column(
-                          mainAxisAlignment: MainAxisAlignment.center, 
-                          children: [
-                            Icon(Icons.add_a_photo, size: 40, color: primaryColor), 
-                            const SizedBox(height: 8),
-                            const Text("Tap to Add Photo")
-                          ]
-                        ) 
-                      : null,
-                ),
-              ),
-              
-              if (_imageFile != null || _existingImageUrl != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton.icon(
-                        onPressed: _showImageOptions,
-                        icon: const Icon(Icons.edit),
-                        label: const Text("Change"),
-                      ),
-                      // Only allow removing if new file picked, can't remove mandatory image for now logic
-                      if (_imageFile != null)
-                        TextButton.icon(
-                          onPressed: () => setState(() => _imageFile = null),
-                          icon: const Icon(Icons.undo, color: Colors.orange),
-                          label: const Text("Undo New Image", style: TextStyle(color: Colors.orange)),
-                        ),
-                    ],
-                  ),
-                ),
+              const SizedBox(height: 80),
             ],
           ),
         ),
       ),
-      bottomNavigationBar: Padding(
-        padding: const EdgeInsets.all(16.0),
+      bottomNavigationBar: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: theme.scaffoldBackgroundColor, 
+          border: Border(top: BorderSide(color: theme.dividerColor.withOpacity(0.1)))
+        ),
         child: ElevatedButton(
           onPressed: _isLoading ? null : _submit,
           style: ElevatedButton.styleFrom(
-            backgroundColor: Theme.of(context).colorScheme.primary,
+            backgroundColor: theme.colorScheme.primary,
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(vertical: 16),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))
           ),
           child: _isLoading 
-            ? const CircularProgressIndicator(color: Colors.white) 
+            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) 
             : Text(isEditing ? "Save Changes" : "Publish Listing"),
         ),
       ),

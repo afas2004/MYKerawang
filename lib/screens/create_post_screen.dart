@@ -3,8 +3,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 class CreatePostScreen extends StatefulWidget {
   final Map<String, dynamic>? sharedEvent;
+  final Map<String, dynamic>? sharedListing;
 
-  const CreatePostScreen({super.key, this.sharedEvent});
+  const CreatePostScreen({super.key, this.sharedEvent, this.sharedListing});
 
   @override
   State<CreatePostScreen> createState() => _CreatePostScreenState();
@@ -16,7 +17,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   bool _isAnon = false;
   bool _isLoading = false;
   String? _selectedTag;
-
+  
   final List<String> _tags = ['Question', 'Confession', 'Lost&Found', 'Rant', 'Academic'];
 
   Future<void> _submit() async {
@@ -32,6 +33,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         'body': _bodyCtrl.text,
         'is_anonymous': _isAnon,
         'shared_event_id': widget.sharedEvent?['id'],
+        'shared_listing_id': widget.sharedListing?['id'],
         'tags': _selectedTag != null ? [_selectedTag] : [],
       });
       if (mounted) {
@@ -47,6 +49,8 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final bool isEvent = widget.sharedEvent != null;
+    final bool isListing = widget.sharedListing != null;
     return Scaffold(
       appBar: AppBar(
         title: const Text("Create Post"),
@@ -60,39 +64,45 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // 1. THE REFERENCE BAR (Only if sharedEvent exists)
-          if (widget.sharedEvent != null)
-            Container(
-              margin: const EdgeInsets.only(bottom: 16),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest, // Grey background
-                borderRadius: BorderRadius.circular(8),
-                border: Border(
-                  left: BorderSide(color: Theme.of(context).colorScheme.primary, width: 4),
-                ),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.event, size: 20),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text("Referencing Event:", style: TextStyle(fontSize: 10, color: Colors.grey)),
-                        Text(
-                          widget.sharedEvent!['title'], 
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                          maxLines: 1, 
-                          overflow: TextOverflow.ellipsis
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+          if (isEvent || isListing)
+          Container(
+            // Optional: Add a little border/color to make it pop (like in the event screen)
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.grey.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
             ),
+            child: Row(
+              children: [
+                // DYNAMIC ICON: Calendar for Event, Shopping Bag for Item
+                Icon(
+                  isEvent ? Icons.event : Icons.shopping_bag, 
+                  size: 20,
+                  color: isEvent ? Theme.of(context).primaryColor : Colors.orange,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // DYNAMIC LABEL
+                      Text(
+                        isEvent ? "Referencing Event:" : "Referencing Item:", 
+                        style: const TextStyle(fontSize: 10, color: Colors.grey)
+                      ),
+                      // DYNAMIC TITLE
+                      Text(
+                        isEvent ? widget.sharedEvent!['title'] : widget.sharedListing!['title'], 
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        maxLines: 1, 
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
           TextField(
             controller: _titleCtrl,
             decoration: const InputDecoration(

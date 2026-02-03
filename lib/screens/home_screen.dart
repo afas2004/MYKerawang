@@ -56,16 +56,15 @@ class _HomeScreenState extends State<HomeScreen> {
       // 3. Fetch Posts and linked Events
       // We also mix in a few events/listings into the feed for variety
       final posts = await _supabase.from('posts')
-          .select('*, events(*)')
-          .order('created_at', ascending: false)
-          .limit(20);
+          .select('*,profiles(*), events(*), listings(*)')
+          .order('created_at', ascending: false);
 
       final List<dynamic> mixedFeed = [];
       for (var p in posts) { mixedFeed.add({...p, 'type': 'post'}); }
       
       // Shuffle 2 random events into the feed just for fun
       if (events.length > 2) {
-        mixedFeed.insert(2, {...events[2], 'type': 'event'});
+        mixedFeed.insert(5, {...events[5], 'type': 'event'});
       }
 
       if (mounted) {
