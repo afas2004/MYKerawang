@@ -50,6 +50,9 @@ dependencies:
   flutter_image_compress: ^2.4.0
   path_provider: ^2.1.5
   http: ^1.6.0
+  gal: ^2.3.2
+  flutter_typeahead: ^5.2.0
+  flutter_parsed_text: ^2.2.1
 
 dev_dependencies:
   flutter_test:

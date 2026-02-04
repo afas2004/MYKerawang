@@ -1,7 +1,9 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_parsed_text/flutter_parsed_text.dart';
 import 'package:intl/intl.dart';
 import 'package:mykerawang/services/share_service.dart';
+import 'package:mykerawang/utils/report_helper.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:timeago/timeago.dart' as timeago;
@@ -222,6 +224,12 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
         ? DateTime.parse(_event['end_datetime']) 
         : null;
     final gallery = List<String>.from(_event['gallery_urls'] ?? []);
+    
+    // 1. PREPARE THE DATA (Handle Empty Strings correctly)
+    final String rawDesc = _event['description'] ?? '';
+    final String descriptionText = rawDesc.trim().isEmpty 
+        ? 'No details provided.' 
+        : rawDesc;
 
     final List<String> allImages = [
       if (_event['image_url'] != null) _event['image_url'],
@@ -374,6 +382,22 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                             );
                           },
                         ),
+                        PopupMenuButton<String>(
+                          icon: const CircleAvatar(
+                            backgroundColor: Colors.black45, 
+                            child: Icon(Icons.more_vert, color: Colors.white)
+                          ),
+                          onSelected: (val) {
+                            // Change 'listing' to 'event' depending on the screen
+                            showReportDialog(context, _event['id'], 'event'); 
+                          },
+                          itemBuilder: (ctx) => [
+                            const PopupMenuItem(
+                              value: 'report',
+                              child: Text("Report this content", style: TextStyle(color: Colors.red)),
+                            ),
+                          ],
+                        ),
                       ],
                     ),
                     const SizedBox(height: 16),
@@ -467,13 +491,45 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                           onPressed: () {
                             Navigator.push(context, MaterialPageRoute(builder: (_) => CreatePostScreen(sharedEvent: _event)));
                           },
-                          icon: const Icon(Icons.arrow_forward, size: 16),
-                          label: const Text("Post"),
+                          icon: const Icon(Icons.repeat, size: 16),
+                          label: const Text("Repost"),
                         ),
                       ],
                     ),
                     const SizedBox(height: 8),
-                    Text(_event['description'] ?? 'No details provided.', style: const TextStyle(fontSize: 16, height: 1.5, color: Colors.grey)),
+
+                    // 2. RENDER THE WIDGET
+                    Container(
+                      width: double.infinity,
+                      // Add a subtle background color temporarily to debug if it's invisible
+                      color: Colors.transparent, 
+                      child: ParsedText(
+                        text: descriptionText,
+                        style: TextStyle(
+                          fontSize: 16, 
+                          height: 1.5, 
+                          color: Theme.of(context).colorScheme.onSurface, // Adapts to Dark/Light mode
+                        ),
+                        parse: [
+                          MatchText(
+                            pattern: r"\@(\w+)",
+                            style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold),
+                            onTap: (username) async {
+                              final cleanName = username.substring(1);
+                              final user = await Supabase.instance.client
+                                  .from('profiles')
+                                  .select('id')
+                                  .eq('username', cleanName)
+                                  .maybeSingle();
+
+                              if (user != null && context.mounted) {
+                                Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: user['id'])));
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
                     const SizedBox(height: 32),
                     
                     // --- REGISTER BUTTON (VISIBLE TO EVERYONE HERE) ---
@@ -538,6 +594,21 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                               leading: const CircleAvatar(radius: 14, child: Icon(Icons.person, size: 14)),
                               title: Text(c['body']),
                               subtitle: Text(timeago.format(DateTime.parse(c['created_at'])), style: const TextStyle(fontSize: 10)),
+                              trailing: PopupMenuButton<String>(
+                                icon: const Icon(Icons.more_vert, size: 18, color: Colors.grey),
+                                onSelected: (value) {
+                                  if (value == 'report') {
+                                    // Pass 'comment' as the type
+                                    showReportDialog(context, c['id'], 'comment');
+                                  }
+                                },
+                                itemBuilder: (context) => [
+                                  const PopupMenuItem(
+                                    value: 'report',
+                                    child: Text("Report Comment", style: TextStyle(color: Colors.red)),
+                                  ),
+                                ],
+                              ),
                             );
                           },
                         );

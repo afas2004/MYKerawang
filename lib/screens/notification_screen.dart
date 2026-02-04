@@ -51,7 +51,7 @@ class NotificationScreen extends StatelessWidget {
                       child: Icon(Icons.notifications, color: isRead ? Colors.grey : Theme.of(context).colorScheme.primary),
                     ),
                     title: Text(notif['title'], style: TextStyle(fontWeight: isRead ? FontWeight.normal : FontWeight.bold)),
-                    subtitle: Text(notif['message']),
+                    subtitle: Text(notif['body'] ?? notif['message'] ?? ''),
                     trailing: Text(
                       timeago.format(DateTime.parse(notif['created_at']), locale: 'en_short'),
                       style: const TextStyle(fontSize: 12, color: Colors.grey),

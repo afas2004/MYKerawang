@@ -4,6 +4,7 @@ import 'package:mykerawang/screens/event_detail_screen.dart';
 import 'package:mykerawang/screens/follow_list_screen.dart';
 import 'package:mykerawang/screens/image_preview_screen.dart';
 import 'package:mykerawang/screens/post_detail_screen.dart';
+import 'package:mykerawang/utils/report_helper.dart';
 import 'package:mykerawang/widgets/linear_refresher';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:qr_flutter/qr_flutter.dart'; 
@@ -61,7 +62,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
       final events = await _supabase.from('events').select().eq('organizer_id', targetUid).order('start_datetime', ascending: false);
       
       // <--- NEW: Fetch Listings
-      final listings = await _supabase.from('listings').select().eq('seller_id', targetUid).eq('is_sold', false).order('created_at', ascending: false);
+      final listings = await _supabase.from('listings').select().eq('seller_id', targetUid).order('created_at', ascending: false);
 
       // 3. Check Follow Status
       if (!_isMe && currentUid != null) {
@@ -264,6 +265,18 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
             IconButton(
               icon: const Icon(Icons.settings),
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen())),
+            )
+          else
+            PopupMenuButton<String>(
+              onSelected: (value) => showReportDialog(context, widget.userId!, 'user'),
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'report',
+                  child: Row(
+                    children: [Icon(Icons.flag, color: Colors.red), SizedBox(width: 8), Text("Report User")],
+                  ),
+                ),
+              ],
             ),
         ],
       ),
@@ -318,7 +331,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                   
                   if (_profile!['bio'] != null)
                     Padding(
-                      padding: const EdgeInsets.only(top: 8),
+                      padding: const EdgeInsets.only(top: 8, bottom: 16),
                       child: Text(_profile!['bio'], textAlign: TextAlign.center, style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
                     ),
 
@@ -481,11 +494,33 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
               ),
             );
           },
-          child: Image.network(
-            item['image_url'] ?? '', // Ensure your posts/events have image_url
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Container(color: Colors.grey[300], child: const Icon(Icons.image_not_supported)),
-          ),
+          child: Stack(
+          fit: StackFit.expand,
+            children: [
+              // 1. The Image (Keep existing)
+              Image.network(
+                item['image_url'] ?? '',
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(color: Colors.grey[300], child: const Icon(Icons.image_not_supported)),
+              ),
+
+              // 2. NEW: "SOLD" Overlay
+              if (item['is_sold'] == true)
+                Container(
+                  color: Colors.black54, // Darkens the image
+                  child: const Center(
+                    child: Text(
+                      "SOLD",
+                      style: TextStyle(
+                        color: Colors.white, 
+                        fontWeight: FontWeight.bold, 
+                        letterSpacing: 1.5
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          )
         );
       },
     );

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mykerawang/widgets/mention_input.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
@@ -180,7 +181,8 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
       if (widget.eventToEdit != null) {
         await supabase.from('events').update(data).eq('id', widget.eventToEdit!['id']);
       } else {
-        await supabase.from('events').insert(data);
+        final newEvent = await supabase.from('events').insert(data).select().single();
+        await _processMentions(_descController.text, newEvent['id']);
       }
       
       if (mounted) Navigator.pop(context, true);
@@ -189,6 +191,36 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // 1. HELPER FUNCTION
+  Future<void> _processMentions(String text, String eventId) async {
+    final regex = RegExp(r"\@(\w+)");
+    final matches = regex.allMatches(text);
+    final usernames = matches.map((m) => m.group(1)).toSet().toList();
+
+    if (usernames.isEmpty) return;
+
+    final supabase = Supabase.instance.client;
+    final myId = supabase.auth.currentUser!.id;
+
+    final users = await supabase
+        .from('profiles')
+        .select('id, username')
+        .inFilter('username', usernames);
+
+    for (var user in users) {
+      if (user['id'] == myId) continue;
+
+      await supabase.from('notifications').insert({
+        'user_id': user['id'],
+        'actor_id': myId,
+        'type': 'mention', // We use the same type
+        'title': 'Tagged in an Event',
+        'body': 'mentioned you in an event description',
+        'data': {'event_id': eventId}, // Link to the Event ID
+      });
     }
   }
 
@@ -328,11 +360,21 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
               _label("Registration Link (Optional)"),
               _input(_linkController, "https://forms.gle/...", icon: Icons.link),
 
-              _label("Description"),
-              TextField(
-                controller: _descController,
-                maxLines: 4,
-                decoration: _inputDeco("Tell us more...", theme),
+              const Text("Description", style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                // REPLACE TextField WITH THIS:
+                child: MentionInput(
+                  controller: _descController, // Your existing controller
+                  hintText: "Event details... (Use @ to tag speakers/organizers)",
+                  isMultiLine: true,
+                ),
               ),
 
               const SizedBox(height: 20),

@@ -1,8 +1,11 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_parsed_text/flutter_parsed_text.dart';
 import 'package:mykerawang/screens/event_detail_screen.dart';
 import 'package:mykerawang/screens/item_detail_screen.dart';
 import 'package:mykerawang/screens/profile_screen.dart'; // Import ProfileScreen
+import 'package:mykerawang/utils/report_helper.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
 class PostCard extends StatelessWidget {
@@ -129,11 +132,32 @@ class PostCard extends StatelessWidget {
 
               // 3. BODY PREVIEW
               if (post['body'] != null)
-                Text(
-                  post['body'],
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: theme.colorScheme.onSurfaceVariant, height: 1.5, fontSize: 14),
+                ParsedText(
+                  text: post['body'] ?? '',
+                  style: TextStyle(color: theme.colorScheme.onSurface), // Your default style
+                  parse: [
+                    MatchText(
+                      pattern: r"\@(\w+)", // Regex to find @username
+                      style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold),
+                      onTap: (username) async {
+                        final cleanName = username.substring(1); // Remove '@'
+                        
+                        // Find the user ID based on the username
+                        final user = await Supabase.instance.client
+                            .from('profiles')
+                            .select('id')
+                            .eq('username', cleanName)
+                            .maybeSingle();
+
+                        if (user != null && context.mounted) {
+                          // Navigate to their profile
+                          Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: user['id'])));
+                        } else if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("User not found")));
+                        }
+                      },
+                    ),
+                  ],
                 ),
               
               // 4. SHARED CONTENT (Event OR Listing)
@@ -177,6 +201,28 @@ class PostCard extends StatelessWidget {
                   ),
                   
                   const Spacer(),
+                  PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert, color: Colors.grey),
+                    onSelected: (value) {
+                      if (value == 'report') {
+                        // Call the helper we just made
+                        showReportDialog(context, post['id'], 'post');
+                      }
+                      // You can add 'delete' here later for the owner
+                    },
+                    itemBuilder: (context) => [
+                      const PopupMenuItem(
+                        value: 'report',
+                        child: Row(
+                          children: [
+                            Icon(Icons.flag, color: Colors.red, size: 20),
+                            SizedBox(width: 8),
+                            Text("Report", style: TextStyle(color: Colors.red)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ],

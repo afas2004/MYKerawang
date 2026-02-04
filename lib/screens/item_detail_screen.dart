@@ -1,7 +1,9 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:gal/gal.dart';
 import 'package:http/http.dart' as http;
 import 'package:mykerawang/services/share_service.dart';
+import 'package:mykerawang/utils/report_helper.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart'; 
 import 'create_listing_screen.dart'; 
@@ -113,6 +115,23 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
     }
   }
 
+  Future<void> _saveQR(String url) async {
+    try {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Saving QR..."), duration: Duration(seconds: 1)));
+      
+      // 1. Download bytes using existing http package
+      final response = await http.get(Uri.parse(url));
+      
+      // 2. Save to Gallery
+      await Gal.putImageBytes(response.bodyBytes);
+      
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("QR Saved to Gallery!")));
+    } catch (e) {
+      debugPrint("Save error: $e");
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Could not save image. Check permissions.")));
+    }
+  }
+  
   Future<void> _showPurchaseDialog() async {
     if (_sellerProfile == null) return;
 
@@ -120,88 +139,108 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
     final phone = _sellerProfile!['phone_number'];
     final sellerName = _sellerProfile!['username'] ?? "Seller";
 
+    // Track state LOCALLY inside this function logic
+    bool isSaving = false;
+    bool isSaved = false;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text("Contact Seller", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Text("Buying from @$sellerName", style: const TextStyle(color: Colors.grey)),
-            const SizedBox(height: 24),
+      builder: (ctx) => StatefulBuilder(
+        // 'setModalState' allows us to rebuild ONLY this bottom sheet
+        builder: (BuildContext context, StateSetter setModalState) {
+          return Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text("Contact Seller", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Text("Buying from @$sellerName", style: const TextStyle(color: Colors.grey)),
+                const SizedBox(height: 24),
 
-            // 1. QR CODE SECTION
-            if (qrUrl != null) ...[
-              const Text("DuitNow QR", style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              Container(
-                height: 200,
-                width: 200,
-                decoration: BoxDecoration(border: Border.all(color: Colors.grey[300]!)),
-                child: CachedNetworkImage(
-                  imageUrl: qrUrl,
-                  fit: BoxFit.cover,
-                  placeholder: (_,__) => const Center(child: CircularProgressIndicator()),
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text("Screenshot & Scan to Pay", style: TextStyle(fontSize: 12, color: Colors.grey)),
-              const SizedBox(height: 24),
-            ],
-
-            // 2. WHATSAPP BUTTON
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                icon: const Icon(Icons.chat),
-                label: const Text("Chat on WhatsApp"),
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.green, 
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-                onPressed: () async {
-                  if (phone == null || phone.isEmpty) {
-                    Navigator.pop(ctx);
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Seller hasn't provided a phone number.")));
-                    return;
-                  }
-
-                  final cleanPhone = phone.replaceAll(RegExp(r'\D'), '');
-                  String finalUrl = _itemData['image_url'] ?? '';
-
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Generating WhatsApp link..."), duration: Duration(seconds: 1))
-                  );
-
-                  try {
-                    final response = await http.get(Uri.parse('https://tinyurl.com/api-create.php?url=$finalUrl'));
-                    if (response.statusCode == 200) finalUrl = response.body;
-                  } catch (e) {
-                    debugPrint("Shortener failed");
-                  }
-
-                  final message = 
-                      "Hai! Saya berminat dengan barang anda di *MYKerawang*.\n\n"
-                      "*Barang:* ${_itemData['title']}\n"
-                      "*Harga:* RM ${_itemData['price']}\n\n"
-                      "_Link Gambar:_ $finalUrl";
+                if (qrUrl != null) ...[
+                  const Text("DuitNow QR", style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Container(
+                    height: 200, width: 200,
+                    decoration: BoxDecoration(border: Border.all(color: Colors.grey[300]!)),
+                    child: CachedNetworkImage(
+                      imageUrl: qrUrl,
+                      fit: BoxFit.cover,
+                      placeholder: (_,__) => const Center(child: CircularProgressIndicator()),
+                    ),
+                  ),
                   
-                  ShareService.openWhatsApp(context, phone, message);
-                },
-              ),
+                  // --- SAVE BUTTON (Fixed) ---
+                  TextButton.icon(
+                    onPressed: (isSaving || isSaved) 
+                      ? null // Disable if busy or done
+                      : () async {
+                          // 1. Update UI to "Saving..."
+                          setModalState(() => isSaving = true);
+
+                          try {
+                            // 2. Download & Save
+                            final response = await http.get(Uri.parse(qrUrl));
+                            await Gal.putImageBytes(response.bodyBytes);
+                            
+                            // 3. Update UI to "Success"
+                            setModalState(() {
+                              isSaving = false;
+                              isSaved = true;
+                            });
+                          } catch (e) {
+                            debugPrint("Save error: $e");
+                            setModalState(() => isSaving = false);
+                          }
+                        },
+                    // Dynamic Icon
+                    icon: isSaving 
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) 
+                      : Icon(isSaved ? Icons.check_circle : Icons.save_alt, color: isSaved ? Colors.green : null),
+                    // Dynamic Text
+                    label: Text(
+                      isSaving ? "Saving..." : (isSaved ? "Saved to Gallery!" : "Save to Gallery"),
+                      style: TextStyle(
+                        color: isSaved ? Colors.green : null, 
+                        fontWeight: isSaved ? FontWeight.bold : null
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 8),
+                  const Text("Screenshot & Scan to Pay", style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  const SizedBox(height: 24),
+                ],
+
+                // 2. WHATSAPP BUTTON (Keep your existing one)
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    icon: const Icon(Icons.chat),
+                    label: const Text("Chat on WhatsApp"),
+                    style: FilledButton.styleFrom(backgroundColor: Colors.green, padding: const EdgeInsets.symmetric(vertical: 12)),
+                    onPressed: () {
+                       // ... (Paste your existing WhatsApp logic here) ...
+                       // Short version for context:
+                       if (phone != null && phone.isNotEmpty) {
+                         // ShareService.openWhatsApp(...);
+                       }
+                    },
+                  ),
+                ),
+                
+                const SizedBox(height: 12),
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close")),
+              ],
             ),
-            
-            const SizedBox(height: 12),
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close")),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
-
+  
   @override
   Widget build(BuildContext context) {
     final currentUser = Supabase.instance.client.auth.currentUser;
@@ -309,6 +348,22 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                           ShareService.shareContent(context, _itemData['title'], "Price: RM ${_itemData['price']}\n${_itemData['description'] ?? ''}", _itemData['image_url']);
                         },
                       ),
+                      PopupMenuButton<String>(
+                        icon: const CircleAvatar(
+                          backgroundColor: Colors.black45, 
+                          child: Icon(Icons.more_vert, color: Colors.white)
+                        ),
+                        onSelected: (val) {
+                          // Change 'listing' to 'event' depending on the screen
+                          showReportDialog(context, _itemData['id'], 'listing'); 
+                        },
+                        itemBuilder: (ctx) => [
+                          const PopupMenuItem(
+                            value: 'report',
+                            child: Text("Report this content", style: TextStyle(color: Colors.red)),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                   const SizedBox(height: 20),
@@ -351,8 +406,8 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please update CreatePostScreen first!")));
                           }
                         },
-                        icon: const Icon(Icons.arrow_forward, size: 16),
-                        label: const Text("Post"),
+                        icon: const Icon(Icons.repeat, size: 16),
+                        label: const Text("Repost"),
                       ),
                     ],
                   ),

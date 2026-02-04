@@ -1,5 +1,9 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_parsed_text/flutter_parsed_text.dart';
+import 'package:mykerawang/screens/profile_screen.dart';
+import 'package:mykerawang/utils/report_helper.dart';
+import 'package:mykerawang/widgets/mention_input.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:timeago/timeago.dart' as timeago;
 import '../widgets/post_card.dart';
@@ -72,35 +76,59 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     return List<Map<String, dynamic>>.from(response);
   }
 
+  // PASTE THIS INSIDE _PostDetailScreenState class
+  Future<void> _processMentions(String text, String postId, {String? commentId}) async {
+    final regex = RegExp(r"\@(\w+)");
+    final matches = regex.allMatches(text);
+    final usernames = matches.map((m) => m.group(1)).toSet().toList();
+
+    if (usernames.isEmpty) return;
+
+    final myId = _supabase.auth.currentUser!.id;
+
+    final users = await _supabase
+        .from('profiles')
+        .select('id, username')
+        .inFilter('username', usernames);
+
+    for (var user in users) {
+      if (user['id'] == myId) continue;
+
+      await _supabase.from('notifications').insert({
+        'user_id': user['id'],
+        'actor_id': myId,
+        'type': 'mention',
+        'title': 'You were mentioned in a comment', // Changed title slightly
+        'body': 'replied: $text',
+        'data': {'post_id': postId, 'comment_id': commentId},
+      });
+    }
+  }
+
   Future<void> _submitComment() async {
     final text = _commentCtrl.text.trim();
     if (text.isEmpty) return;
-
-    final user = _supabase.auth.currentUser;
-    if (user == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please login to comment")));
-      return;
-    }
+    
+    // ... (Your existing login check) ...
 
     setState(() => _isLoading = true);
 
     try {
-      // 1. Send to Database
-      await _supabase.from('comments').insert({
+      // 1. Send to Database AND Select the ID back
+      final newComment = await _supabase.from('comments').insert({
         'post_id': widget.post['id'],
-        'user_id': user.id,
+        'user_id': _supabase.auth.currentUser!.id,
         'body': text,
         'is_anonymous': _isAnon,
-      });
+      }).select().single(); // <--- ADD .select().single()
 
-      // 2. Clear Input
+      // 2. PROCESS MENTIONS (This was missing!)
+      await _processMentions(text, widget.post['id'], commentId: newComment['id']);
+
+      // 3. Clear Input & Refresh
       _commentCtrl.clear();
-      FocusScope.of(context).unfocus(); // Hide keyboard
-      
-      // 3. REFRESH DATA (The Fix)
-      await _refreshData(); // Updates the "5 Replies" counter
-      
-      // FORCE THE LIST TO RELOAD IMMEDIATELY
+      FocusScope.of(context).unfocus(); 
+      await _refreshData();
       setState(() {
         _commentsStream = _fetchCommentsStream(); 
       });
@@ -186,7 +214,50 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                                   Text(timeago.format(DateTime.parse(c['created_at']), locale: 'en_short'), style: const TextStyle(fontSize: 12, color: Colors.grey)),
                                 ],
                               ),
-                              subtitle: Text(c['body'], style: TextStyle(color: Theme.of(context).colorScheme.onSurface)),
+
+                              subtitle: ParsedText(
+                                text: c['body'] ?? '',
+                                style: TextStyle(color: Theme.of(context).colorScheme.onSurface), // Default color
+                                parse: [
+                                  MatchText(
+                                    pattern: r"\@(\w+)", // Finds @username
+                                    style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold),
+                                    onTap: (username) async {
+                                      final cleanName = username.substring(1); // Remove @
+                                      
+                                      // 1. Find the User ID
+                                      final user = await Supabase.instance.client
+                                          .from('profiles')
+                                          .select('id')
+                                          .eq('username', cleanName)
+                                          .maybeSingle();
+
+                                      // 2. Navigate
+                                      if (user != null && context.mounted) {
+                                        Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: user['id'])));
+                                      } else if (context.mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("User not found")));
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ),
+                              
+                              trailing: PopupMenuButton<String>(
+                                icon: const Icon(Icons.more_vert, size: 18, color: Colors.grey),
+                                onSelected: (value) {
+                                  if (value == 'report') {
+                                    // Pass 'comment' as the type
+                                    showReportDialog(context, c['id'], 'comment');
+                                  }
+                                },
+                                itemBuilder: (context) => [
+                                  const PopupMenuItem(
+                                    value: 'report',
+                                    child: Text("Report Comment", style: TextStyle(color: Colors.red)),
+                                  ),
+                                ],
+                              ),
                             );
                           },
                         );
@@ -217,15 +288,11 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     onPressed: () => setState(() => _isAnon = !_isAnon),
                   ),
                   Expanded(
-                    child: TextField(
+                    child: MentionInput(
                       controller: _commentCtrl,
-                      decoration: InputDecoration(
-                        hintText: _isAnon ? "Reply anonymously..." : "Write a reply...",
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
-                        filled: true,
-                        fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      ),
+                      hintText: "What's on your mind?",
+                      isMultiLine: true,
+                      reverseDirection: true,
                     ),
                   ),
                   const SizedBox(width: 8),

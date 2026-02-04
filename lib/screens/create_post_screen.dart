@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mykerawang/widgets/mention_input.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class CreatePostScreen extends StatefulWidget {
@@ -27,23 +28,62 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     final user = Supabase.instance.client.auth.currentUser;
 
     try {
-      await Supabase.instance.client.from('posts').insert({
+      // --- CHANGED SECTION START ---
+      // We change .insert() to .select().single() so we get the new Post ID back
+      final newPost = await Supabase.instance.client.from('posts').insert({
         'user_id': user!.id,
         'title': _titleCtrl.text,
-        'body': _bodyCtrl.text,
+        'body': _bodyCtrl.text, // Make sure this uses your controller name
         'is_anonymous': _isAnon,
         'shared_event_id': widget.sharedEvent?['id'],
         'shared_listing_id': widget.sharedListing?['id'],
         'tags': _selectedTag != null ? [_selectedTag] : [],
-      });
+      }).select().single(); // <--- CRITICAL CHANGE
+
+      // Trigger the notifications using the new ID
+      await _processMentions(_bodyCtrl.text, newPost['id']);
+      // --- CHANGED SECTION END ---
+
       if (mounted) {
-      Navigator.pop(context, true); 
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Posted successfully!")));
-    }
+        Navigator.pop(context, true); 
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Posted successfully!")));
+      }
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _processMentions(String text, String postId, {String? commentId}) async {
+    // 1. Extract all unique @usernames using Regex
+    final regex = RegExp(r"\@(\w+)");
+    final matches = regex.allMatches(text);
+    final usernames = matches.map((m) => m.group(1)).toSet().toList();
+
+    if (usernames.isEmpty) return;
+
+    final supabase = Supabase.instance.client;
+    final myId = supabase.auth.currentUser!.id;
+
+    // 2. Find User IDs for these usernames
+    final users = await supabase
+        .from('profiles')
+        .select('id, username')
+        .inFilter('username', usernames);
+
+    // 3. Send Notifications
+    for (var user in users) {
+      if (user['id'] == myId) continue; // Don't notify yourself
+
+      await supabase.from('notifications').insert({
+        'user_id': user['id'],
+        'actor_id': myId,
+        'type': 'mention',
+        'title': 'You were mentioned',
+        'body': 'mentioned you in a post',
+        'data': {'post_id': postId, 'comment_id': commentId},
+      });
     }
   }
 
@@ -113,13 +153,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
             style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           ),
           const Divider(),
-          TextField(
+          MentionInput(
             controller: _bodyCtrl,
-            maxLines: 8,
-            decoration: const InputDecoration(
-              hintText: "What's on your mind?",
-              border: InputBorder.none,
-            ),
+            hintText: "What's on your mind?",
+            isMultiLine: true,
           ),
           const SizedBox(height: 20),
           

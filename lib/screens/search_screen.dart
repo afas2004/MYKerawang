@@ -5,7 +5,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import 'event_detail_screen.dart';
 import 'item_detail_screen.dart';
-import '../widgets/universal_card.dart'; // Uncomment if you created this file
+import 'profile_screen.dart';
+import 'post_detail_screen.dart'; // Ensure this exists
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -22,7 +23,11 @@ class _SearchScreenState extends State<SearchScreen> {
   String _query = '';
   List<Map<String, dynamic>> _results = [];
   bool _isLoading = false;
-  String _activeFilter = 'All'; // Options: All, People, Events, Market
+  String _activeFilter = 'All'; // Options: All, People, Events, Market, Posts
+  
+  // Pagination State
+  int _searchLimit = 10;
+  bool _hasMore = true; // Simple check to see if we hit the limit
 
   @override
   void dispose() {
@@ -35,10 +40,14 @@ class _SearchScreenState extends State<SearchScreen> {
   void _onSearchChanged(String query) {
     if (_debounce?.isActive ?? false) _debounce!.cancel();
     
-    // Wait 500ms before hitting the database (Save API calls)
+    // Wait 500ms before hitting the database (Optimization)
     _debounce = Timer(const Duration(milliseconds: 500), () {
       if (query.isNotEmpty) {
-        setState(() => _query = query);
+        setState(() {
+          _query = query;
+          _searchLimit = 10; // Reset limit on new search
+          _hasMore = true;
+        });
         _performSearch();
       } else {
         setState(() {
@@ -49,19 +58,33 @@ class _SearchScreenState extends State<SearchScreen> {
     });
   }
 
+  Future<void> _loadMore() async {
+    setState(() {
+      _searchLimit += 10;
+    });
+    await _performSearch();
+  }
+
   Future<void> _performSearch() async {
+    if (_query.isEmpty) return;
     setState(() => _isLoading = true);
     
     List<Map<String, dynamic>> tempResults = [];
-    final q = "%$_query%"; // SQL Wildcard for "contains"
+    final q = "%$_query%";
+    // Split limit across categories if "All" is selected to ensure variety
+    final int limitPerCategory = _activeFilter == 'All' ? (_searchLimit ~/ 4) + 2 : _searchLimit;
+
+    // Track IDs for Contextual Post Search
+    List<String> foundEventIds = [];
+    List<String> foundListingIds = [];
 
     try {
-      // 1. Search PROFILES (People)
+      // 1. Search PROFILES
       if (_activeFilter == 'All' || _activeFilter == 'People') {
         final people = await _supabase.from('profiles')
-            .select('id, full_name, avatar_url, role')
-            .ilike('full_name', q)
-            .limit(5);
+            .select('id, full_name, display_name, avatar_url, role')
+            .or('full_name.ilike.$q, display_name.ilike.$q')
+            .limit(limitPerCategory);
             
         for (var p in people) {
           tempResults.add({...p, 'type': 'person'});
@@ -69,39 +92,78 @@ class _SearchScreenState extends State<SearchScreen> {
       }
 
       // 2. Search EVENTS
-      if (_activeFilter == 'All' || _activeFilter == 'Events') {
+      if (_activeFilter == 'All' || _activeFilter == 'Events' || _activeFilter == 'Posts') {
         final nowStr = DateTime.now().toUtc().toIso8601String();
         final events = await _supabase.from('events')
-            .select()
+            .select('id, title, start_datetime, image_url')
             .ilike('title', q)
-            .gte('end_datetime', nowStr) // Only future events
-            .limit(5);
+            .gte('end_datetime', nowStr)
+            .limit(limitPerCategory);
             
         for (var e in events) {
-          tempResults.add({...e, 'type': 'event'});
+          if (_activeFilter != 'Posts') tempResults.add({...e, 'type': 'event'});
+          foundEventIds.add(e['id']); 
         }
       }
 
       // 3. Search MARKETPLACE
-      if (_activeFilter == 'All' || _activeFilter == 'Market') {
+      if (_activeFilter == 'All' || _activeFilter == 'Market' || _activeFilter == 'Posts') {
         final items = await _supabase.from('listings')
-            .select()
+            .select('id, title, price, image_url, is_sold')
             .ilike('title', q)
-            .eq('is_sold', false) // Only unsold items
-            .limit(5);
+            .eq('is_sold', false)
+            .limit(limitPerCategory);
             
         for (var i in items) {
-          tempResults.add({...i, 'type': 'market'});
+          if (_activeFilter != 'Posts') tempResults.add({...i, 'type': 'market'});
+          foundListingIds.add(i['id']); 
         }
       }
 
-      // 4. Shuffle mixed results so they don't look grouped strictly by table
+      // 4. Search POSTS (Direct + Contextual)
+      if (_activeFilter == 'All' || _activeFilter == 'Posts') {
+        // Build robust filter: matches body OR matches related event/item
+        String postFilter = 'title.ilike.$q, body.ilike.$q';
+        
+        if (foundEventIds.isNotEmpty) {
+          postFilter += ', shared_event_id.in.(${foundEventIds.join(',')})';
+        }
+        if (foundListingIds.isNotEmpty) {
+          postFilter += ', shared_listing_id.in.(${foundListingIds.join(',')})';
+        }
+
+        final posts = await _supabase.from('posts')
+            // Fetch related data to show nice titles
+            .select('*, profiles(display_name, avatar_url), events(title), listings(title)') 
+            .or(postFilter)
+            .order('created_at', ascending: false)
+            .limit(limitPerCategory);
+
+        for (var p in posts) {
+          // Smart Title Generation
+          String displayTitle = p['title'] ?? "Post";
+          if ((p['title'] == null || p['title'].toString().trim().isEmpty)) {
+            if (p['events'] != null) displayTitle = "Re: ${p['events']['title']}";
+            else if (p['listings'] != null) displayTitle = "Re: ${p['listings']['title']}";
+          }
+
+          tempResults.add({
+            ...p, 
+            'type': 'post',
+            'title': displayTitle,
+          });
+        }
+      }
+
+      // Shuffle for discovery feel if "All"
       if (_activeFilter == 'All') tempResults.shuffle();
 
       if (mounted) {
         setState(() {
           _results = tempResults;
           _isLoading = false;
+          // If we got fewer results than we asked for, we probably hit the end
+          _hasMore = tempResults.length >= _searchLimit; 
         });
       }
     } catch (e) {
@@ -116,9 +178,9 @@ class _SearchScreenState extends State<SearchScreen> {
       appBar: AppBar(
         title: TextField(
           controller: _searchCtrl,
-          autofocus: false,
+          autofocus: true,
           decoration: InputDecoration(
-            hintText: 'Search UiTM...',
+            hintText: 'Search posts, people, items...',
             border: InputBorder.none,
             hintStyle: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
             suffixIcon: _query.isNotEmpty 
@@ -141,7 +203,7 @@ class _SearchScreenState extends State<SearchScreen> {
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Row(
-              children: ['All', 'People', 'Events', 'Market'].map((filter) {
+              children: ['All', 'Posts', 'People', 'Events', 'Market'].map((filter) {
                 final isSelected = _activeFilter == filter;
                 return Padding(
                   padding: const EdgeInsets.only(right: 8),
@@ -151,7 +213,8 @@ class _SearchScreenState extends State<SearchScreen> {
                     onSelected: (val) {
                       setState(() {
                         _activeFilter = filter;
-                        // Re-run search immediately if we already have a query
+                        // Reset pagination on filter change
+                        _searchLimit = 10;
                         if (_query.isNotEmpty) _performSearch();
                       });
                     },
@@ -171,12 +234,11 @@ class _SearchScreenState extends State<SearchScreen> {
               }).toList(),
             ),
           ),
-
           const Divider(height: 1),
 
           // --- RESULTS LIST ---
           Expanded(
-            child: _isLoading 
+            child: _isLoading && _results.isEmpty 
               ? const Center(child: CircularProgressIndicator())
               : _results.isEmpty
                   ? Center(
@@ -194,13 +256,25 @@ class _SearchScreenState extends State<SearchScreen> {
                     )
                   : ListView.separated(
                       padding: const EdgeInsets.all(16),
-                      itemCount: _results.length,
+                      itemCount: _results.length + 1, // +1 for Show More button
                       separatorBuilder: (_,__) => const SizedBox(height: 12),
                       itemBuilder: (context, index) {
+                        // --- SHOW MORE BUTTON (At the end) ---
+                        if (index == _results.length) {
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            child: _isLoading 
+                              ? const Center(child: CircularProgressIndicator())
+                              : TextButton(
+                                  onPressed: _loadMore,
+                                  child: const Text("Show More Results"),
+                                ),
+                          );
+                        }
+
                         final item = _results[index];
                         final type = item['type'];
 
-                        // RENDER DIFFERENT CARDS BASED ON TYPE
                         if (type == 'person') return _buildPersonCard(item);
                         return _buildContentCard(item, type);
                       },
@@ -221,31 +295,59 @@ class _SearchScreenState extends State<SearchScreen> {
             : null,
         child: item['avatar_url'] == null ? const Icon(Icons.person) : null,
       ),
-      title: Text(item['full_name'] ?? 'Unknown', style: const TextStyle(fontWeight: FontWeight.bold)),
+      title: Text(item['display_name'] ?? item['full_name'] ?? 'Unknown', style: const TextStyle(fontWeight: FontWeight.bold)),
       subtitle: Text(item['role'] == 'student' ? 'Student' : 'Club/Admin'),
       trailing: const Icon(Icons.chevron_right),
       onTap: () {
-        // Navigate to a generic "Public Profile" screen (To be built later?)
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile view coming soon!")));
+        Navigator.push(
+          context, 
+          MaterialPageRoute(builder: (_) => ProfileScreen(userId: item['id']))
+        );
       },
     );
   }
 
-  // --- WIDGET: Event/Market Card (Reusing your style) ---
+  // --- WIDGET: Content Card (Event, Market, Post) ---
   Widget _buildContentCard(Map<String, dynamic> item, String type) {
     final isEvent = type == 'event';
-    final title = item['title'] ?? 'No Title';
+    final isPost = type == 'post';
+    
+    final title = item['title'] ?? 'No Content';
     final image = item['image_url'];
-    final subtitle = isEvent 
-        ? (item['start_datetime'] != null 
-            ? DateFormat('d MMM, h:mm a').format(DateTime.parse(item['start_datetime']).toLocal()) 
-            : 'Date TBA')
-        : "RM ${(item['price'] ?? 0).toStringAsFixed(2)}";
+    
+    String subtitle;
+    String badgeLabel;
+    Color badgeColor;
+    IconData placeholderIcon;
+
+    if (isEvent) {
+      subtitle = item['start_datetime'] != null 
+          ? DateFormat('d MMM, h:mm a').format(DateTime.parse(item['start_datetime']).toLocal()) 
+          : 'Date TBA';
+      badgeLabel = 'EVENT';
+      badgeColor = Theme.of(context).colorScheme.primary;
+      placeholderIcon = Icons.event;
+    } else if (isPost) {
+      // For posts, show who posted it
+      final author = item['profiles']?['display_name'] ?? 'Anonymous';
+      subtitle = "Posted by $author"; 
+      badgeLabel = 'POST';
+      badgeColor = Colors.blueGrey;
+      placeholderIcon = Icons.article;
+    } else {
+      // Market
+      subtitle = "RM ${(item['price'] ?? 0).toStringAsFixed(2)}";
+      badgeLabel = 'MARKET';
+      badgeColor = Colors.orange;
+      placeholderIcon = Icons.store;
+    }
 
     return GestureDetector(
       onTap: () {
         if (isEvent) {
           Navigator.push(context, MaterialPageRoute(builder: (_) => EventDetailScreen(event: item)));
+        } else if (isPost) {
+           _navigateToPost(item['id']);
         } else {
           Navigator.push(context, MaterialPageRoute(builder: (_) => ItemDetailScreen(item: item)));
         }
@@ -275,7 +377,7 @@ class _SearchScreenState extends State<SearchScreen> {
                       )
                     : Container(
                         color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                        child: Icon(isEvent ? Icons.event : Icons.store, color: Colors.grey),
+                        child: Icon(placeholderIcon, color: Colors.grey),
                       ),
               ),
             ),
@@ -287,23 +389,19 @@ class _SearchScreenState extends State<SearchScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    // Badge (Event or Market)
+                    // Badge
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
-                        color: isEvent 
-                            ? Theme.of(context).colorScheme.primaryContainer 
-                            : Colors.orange.withOpacity(0.1),
+                        color: badgeColor.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
-                        isEvent ? 'EVENT' : 'MARKET',
+                        badgeLabel,
                         style: TextStyle(
                           fontSize: 10, 
                           fontWeight: FontWeight.bold,
-                          color: isEvent 
-                              ? Theme.of(context).colorScheme.primary 
-                              : Colors.orange,
+                          color: badgeColor,
                         ),
                       ),
                     ),
@@ -319,5 +417,16 @@ class _SearchScreenState extends State<SearchScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _navigateToPost(String postId) async {
+    try {
+      final post = await _supabase.from('posts').select('*, profiles(*), events(*), listings(*)').eq('id', postId).single();
+      if (mounted) {
+         Navigator.push(context, MaterialPageRoute(builder: (_) => PostDetailScreen(post: post)));
+      }
+    } catch (e) {
+      debugPrint("Error opening post: $e");
+    }
   }
 }
