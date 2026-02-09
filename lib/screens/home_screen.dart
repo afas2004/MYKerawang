@@ -1,3 +1,4 @@
+import 'dart:math'; // Import this for Random()
 import 'package:flutter/material.dart';
 import 'package:mykerawang/screens/create_event_screen.dart';
 import 'package:mykerawang/screens/create_listing_screen.dart';
@@ -9,8 +10,8 @@ import '../widgets/post_card.dart';
 import 'event_detail_screen.dart';
 import 'item_detail_screen.dart';
 import 'settings_screen.dart';
-import 'notification_screen.dart'; // We will create this next
-import 'create_post_screen.dart'; // We will create this next
+import 'notification_screen.dart'; 
+import 'create_post_screen.dart'; 
 
 class HomeScreen extends StatefulWidget {
   final Function(int) onTabChange;
@@ -27,7 +28,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   List<dynamic> _socialFeed = []; 
   List<dynamic> _featuredEvents = []; 
-  List<dynamic> _freshMarketItems = []; // New Horizontal Section
+  List<dynamic> _freshMarketItems = []; 
 
   @override
   void initState() {
@@ -39,38 +40,61 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final now = DateTime.now().toIso8601String();
 
-      // 1. Fetch Events (Carousel)
+      // 1. Fetch Events (For Carousel & Injection)
       final events = await _supabase.from('events')
           .select()
           .gt('end_datetime', now)
           .order('start_datetime', ascending: true)
-          .limit(8);
+          .limit(20); // Fetch more for injection
       
-      // 2. Fetch Listings (Horizontal Scroll)
+      // 2. Fetch Listings (For Horizontal & Injection)
       final listings = await _supabase.from('listings')
           .select()
           .eq('is_sold', false)
           .order('created_at', ascending: false)
-          .limit(8);
+          .limit(20);
 
-      // 3. Fetch Posts and linked Events
-      // We also mix in a few events/listings into the feed for variety
+      // 3. Fetch Posts
       final posts = await _supabase.from('posts')
           .select('*,profiles(*), events(*), listings(*)')
-          .order('created_at', ascending: false);
+          .order('created_at', ascending: false)
+          .limit(50); // Fetch enough posts
 
+      // 4. PREPARE MIXED FEED
       final List<dynamic> mixedFeed = [];
-      for (var p in posts) { mixedFeed.add({...p, 'type': 'post'}); }
       
-      // Shuffle 2 random events into the feed just for fun
-      if (events.length > 2) {
-        mixedFeed.insert(5, {...events[5], 'type': 'event'});
+      // Create a pool of "Injectable" items (Events + Listings)
+      final List<dynamic> injectables = [
+        ...events.map((e) => {...e, 'type': 'event'}),
+        ...listings.map((l) => {...l, 'type': 'listing'})
+      ];
+      injectables.shuffle(); // Shuffle so it's not always the same items
+
+      int postCounter = 0;
+      int injectionInterval = 5 + Random().nextInt(4); // Random interval: 5, 6, 7, or 8
+
+      for (var p in posts) {
+        // Add the post
+        mixedFeed.add({...p, 'type': 'post'});
+        postCounter++;
+
+        // Check if it's time to inject
+        if (postCounter >= injectionInterval) {
+          if (injectables.isNotEmpty) {
+            // Take one item from the pool and insert it
+            mixedFeed.add(injectables.removeAt(0));
+            
+            // Reset counter and pick a new random interval
+            postCounter = 0;
+            injectionInterval = 5 + Random().nextInt(4);
+          }
+        }
       }
 
       if (mounted) {
         setState(() {
-          _featuredEvents = events;
-          _freshMarketItems = listings;
+          _featuredEvents = events.take(8).toList(); // Keep top 8 for carousel
+          _freshMarketItems = listings.take(8).toList();
           _socialFeed = mixedFeed;
           _isLoading = false;
         });
@@ -86,7 +110,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final double topPadding = MediaQuery.of(context).padding.top + kToolbarHeight;
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      // FAB for "Functional" Creation
       floatingActionButton: FloatingActionButton(
         onPressed: () => _showCreateOptions(context),
         backgroundColor: Theme.of(context).colorScheme.primary,
@@ -102,113 +125,140 @@ class _HomeScreenState extends State<HomeScreen> {
             SliverAppBar(
               floating: true,
               snap: true,
-            title: const Text("MYKerawang", style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 0.5)),
-            centerTitle: false,
-            actions: [
-              // Notification Bell (Working)
-              IconButton(
-                icon: const Icon(Icons.notifications_outlined),
-                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationScreen())),
-              ),
-              // Settings Icon (Replaces Avatar)
-              IconButton(
-                icon: const Icon(Icons.settings_outlined),
-                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen())),
-              ),
-              const SizedBox(width: 8),
-            ],
-          ),
-
-          // 2. EVENTS CAROUSEL (Horizontal)
-          if (!_isLoading && _featuredEvents.isNotEmpty)
-            SliverToBoxAdapter(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _sectionHeader("Happening Soon", () => widget.onTabChange(3)), // Jump to Events Tab
-                  SizedBox(
-                    height: 280, // INCREASED HEIGHT (Fixes Overflow)
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: _featuredEvents.length,
-                      itemBuilder: (context, index) {
-                        return Container(
-                          width: 260,
-                          margin: const EdgeInsets.only(right: 12, bottom: 10),
-                          child: UniversalCard(
-                            data: _featuredEvents[index], 
-                            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => EventDetailScreen(event: _featuredEvents[index]))),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
+              title: const Text("MYKerawang", style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+              centerTitle: false,
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.notifications_outlined),
+                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationScreen())),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.settings_outlined),
+                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen())),
+                ),
+                const SizedBox(width: 8),
+              ],
             ),
 
-          // 3. MARKETPLACE CAROUSEL (New Horizontal Section)
-          if (!_isLoading && _freshMarketItems.isNotEmpty)
-            SliverToBoxAdapter(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _sectionHeader("Fresh Finds", () => widget.onTabChange(2)), // Jump to Market Tab
-                  SizedBox(
-                    height: 280, 
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: _freshMarketItems.length,
-                      itemBuilder: (context, index) {
-                        return Container(
-                          width: 200, // Slightly smaller cards for items
-                          margin: const EdgeInsets.only(right: 12, bottom: 10),
-                          child: UniversalCard(
-                            data: _freshMarketItems[index], 
-                            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ItemDetailScreen(item: _freshMarketItems[index]))),
-                          ),
-                        );
-                      },
+            // 2. EVENTS CAROUSEL (Horizontal)
+            if (!_isLoading && _featuredEvents.isNotEmpty)
+              SliverToBoxAdapter(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _sectionHeader("Happening Soon", () => widget.onTabChange(3)), 
+                    SizedBox(
+                      height: 280,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        itemCount: _featuredEvents.length,
+                        itemBuilder: (context, index) {
+                          return Container(
+                            width: 260,
+                            margin: const EdgeInsets.only(right: 12, bottom: 10),
+                            child: UniversalCard(
+                              data: _featuredEvents[index], 
+                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => EventDetailScreen(event: _featuredEvents[index]))),
+                            ),
+                          );
+                        },
+                      ),
                     ),
-                  ),
-                  const Divider(thickness: 8, height: 24), // Thick separator
-                ],
-              ),
-            ),
-
-          // 4. SOCIAL FEED (Vertical)
-          _isLoading 
-            ? const SliverFillRemaining(child: Center(child: CircularProgressIndicator()))
-            : SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final item = _socialFeed[index];
-                    if (item['type'] == 'event') {
-                      return Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: UniversalCard(
-                          data: item, 
-                          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => EventDetailScreen(event: item)))
-                        ),
-                      );
-                    }
-                    return PostCard(
-                      post: item,
-                      onTap: () {
-                         Navigator.push(
-                          context, 
-                          MaterialPageRoute(builder: (_) => PostDetailScreen(post: item))
-                        );
-                      },
-                    );
-                  },
-                  childCount: _socialFeed.length,
+                  ],
                 ),
               ),
-        ],
-      ),
+
+            // 3. MARKETPLACE CAROUSEL (Horizontal)
+            if (!_isLoading && _freshMarketItems.isNotEmpty)
+              SliverToBoxAdapter(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _sectionHeader("Fresh Finds", () => widget.onTabChange(2)), 
+                    SizedBox(
+                      height: 280, 
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        itemCount: _freshMarketItems.length,
+                        itemBuilder: (context, index) {
+                          return Container(
+                            width: 200, 
+                            margin: const EdgeInsets.only(right: 12, bottom: 10),
+                            child: UniversalCard(
+                              data: _freshMarketItems[index], 
+                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ItemDetailScreen(item: _freshMarketItems[index]))),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const Divider(thickness: 8, height: 24), 
+                  ],
+                ),
+              ),
+
+            // 4. SOCIAL FEED (Vertical Mixed)
+            _isLoading 
+              ? const SliverFillRemaining(child: Center(child: CircularProgressIndicator()))
+              : SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final item = _socialFeed[index];
+                      
+                      // RENDER INJECTED CARDS (Event or Listing)
+                      if (item['type'] == 'event' || item['type'] == 'listing') {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Text(
+                                  item['type'] == 'event' ? "Suggested Event" : "Featured Item",
+                                  style: TextStyle(
+                                    color: Theme.of(context).colorScheme.primary,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                    letterSpacing: 1.0,
+                                  ),
+                                ),
+                              ),
+                              UniversalCard(
+                                data: item, 
+                                onTap: () {
+                                  if (item['type'] == 'event') {
+                                    Navigator.push(context, MaterialPageRoute(builder: (_) => EventDetailScreen(event: item)));
+                                  } else {
+                                    Navigator.push(context, MaterialPageRoute(builder: (_) => ItemDetailScreen(item: item)));
+                                  }
+                                }
+                              ),
+                              const SizedBox(height: 8),
+                              const Divider(),
+                            ],
+                          ),
+                        );
+                      }
+                      
+                      // RENDER POST
+                      return PostCard(
+                        post: item,
+                        onTap: () {
+                           Navigator.push(
+                            context, 
+                            MaterialPageRoute(builder: (_) => PostDetailScreen(post: item))
+                          );
+                        },
+                      );
+                    },
+                    childCount: _socialFeed.length,
+                  ),
+                ),
+          ],
+        ),
       )
     );
   }
@@ -245,7 +295,6 @@ class _HomeScreenState extends State<HomeScreen> {
               title: const Text('Host Event'),
               onTap: () {
                 Navigator.pop(ctx);
-                // We assume CreateEventScreen is already imported
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateEventScreen()));
               }
             ),

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:mykerawang/screens/main_scaffold.dart';
 import 'package:mykerawang/screens/onboarding_screen.dart';
@@ -102,111 +104,121 @@ class AuthGate extends StatefulWidget {
 class _AuthGateState extends State<AuthGate> {
   bool _isLoading = true;
   bool _hasProfile = false;
+  // Keep track of the subscription to cancel it later
+  late final StreamSubscription<AuthState> _authSubscription;
 
   @override
   void initState() {
     super.initState();
-    _checkUserStatus();
-    _setupNotificationListener(); // Keep your existing notification logic!
+    _setupAuthListener();
   }
 
-  // 1. CHECK IF USER EXISTS IN DB
-  Future<void> _checkUserStatus() async {
-    final session = Supabase.instance.client.auth.currentSession;
-    
-    if (session == null) {
-      // Not logged in
-      if (mounted) setState(() => _isLoading = false);
-      return;
-    }
+  void _setupAuthListener() {
+    // 1. Listen to Auth Changes (Login, Logout, Deep Links)
+    _authSubscription = Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      final session = data.session;
+      final event = data.event;
 
+      if (session != null) {
+        // User just logged in (or was already logged in)
+        // 1. Check their profile status to decide navigation
+        _checkUserProfile(session.user.id);
+        
+        // 2. Trigger your Notification Logic (Only if it's a fresh sign-in)
+        if (event == AuthChangeEvent.signedIn) {
+           NotificationService.requestPermission();
+           _startNotificationStream(session.user.id);
+        }
+        
+        // 3. Ensure notification stream runs if we just booted up already logged in
+        if (event == AuthChangeEvent.initialSession) {
+           _startNotificationStream(session.user.id);
+        }
+
+      } else {
+        // User is logged out
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _hasProfile = false;
+          });
+        }
+      }
+    });
+  }
+
+  // Your original logic to check if they completed onboarding
+  Future<void> _checkUserProfile(String userId) async {
     try {
-      // Check if they have a username in 'profiles'
       final data = await Supabase.instance.client
           .from('profiles')
           .select('username')
-          .eq('id', session.user.id)
+          .eq('id', userId)
           .maybeSingle();
 
       if (mounted) {
         setState(() {
           _hasProfile = (data != null && data['username'] != null);
-          _isLoading = false;
+          _isLoading = false; // Stop buffering!
         });
       }
     } catch (e) {
       debugPrint("AuthGate Error: $e");
-      // FAIL OPEN: If database fails (offline), assume they HAVE a profile 
-      // so they can at least see the Home Screen (cached) instead of getting stuck.
+      // Fallback: Stop buffering even if error, so they aren't stuck
       if (mounted) {
         setState(() {
-          _hasProfile = true; // <--- CHANGED from false to true
+          _hasProfile = true; // Fail open (assume profile exists) to let them into Home
           _isLoading = false;
         });
       }
     }
   }
 
-  // THE MAGIC LISTENER (Timezone Fixed)
-  void _setupNotificationListener() {
-    Supabase.instance.client.auth.onAuthStateChange.listen((data) {
-      final event = data.event;
-      final session = data.session;
+  // Extracted your notification logic into a clean function
+  void _startNotificationStream(String userId) {
+    debugPrint("🔔 Notification Listener STARTED for $userId");
+    
+    Supabase.instance.client
+        .from('notifications')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', userId)
+        .listen((List<Map<String, dynamic>> data) {
+          
+          if (data.isNotEmpty) {
+            final latest = data.last; 
+            
+            // Timezone Fix
+            final created = DateTime.parse(latest['created_at']).toUtc(); 
+            final now = DateTime.now().toUtc(); 
+            final difference = now.difference(created).inSeconds.abs();
 
-      // When User Logs In...
-      if (event == AuthChangeEvent.signedIn && session != null) {
-        
-        // 1. Ask for Android Permission immediately
-        NotificationService.requestPermission();
-        debugPrint("🔔 Notification Listener STARTED for ${session.user.email}");
+            if (difference < 30) {
+                NotificationService.showNotification(
+                  latest['title'], 
+                  latest['message'] ?? latest['body'] ?? 'New Notification'
+                );
+            }
+          }
+        });
+  }
 
-        // 2. Watch the 'notifications' table for new rows
-        Supabase.instance.client
-            .from('notifications')
-            .stream(primaryKey: ['id'])
-            .eq('user_id', session.user.id)
-            .listen((List<Map<String, dynamic>> data) {
-              
-              if (data.isNotEmpty) {
-                // Get the newest notification
-                final latest = data.last; 
-                
-                // --- TIMEZONE FIX ---
-                // Convert everything to UTC to ensure correct comparison
-                final created = DateTime.parse(latest['created_at']).toUtc(); 
-                final now = DateTime.now().toUtc(); 
-                
-                final difference = now.difference(created).inSeconds.abs();
-
-                debugPrint("🔔 New Data! Title: ${latest['title']}");
-                debugPrint("   Created (UTC): $created");
-                debugPrint("   Now (UTC):     $now");
-                debugPrint("   Difference:    $difference seconds");
-
-                // Check if it is recent (less than 30 seconds to be safe)
-                if (difference < 30) {
-                   debugPrint("✅ TRIGGERING POPUP NOW!");
-                   NotificationService.showNotification(
-                     latest['title'], 
-                     latest['message']
-                   );
-                } else {
-                   debugPrint("❌ Too old, skipping popup.");
-                }
-              }
-            });
-      }
-    });
+  @override
+  void dispose() {
+    _authSubscription.cancel(); // Prevent memory leaks
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final session = Supabase.instance.client.auth.currentSession;
-
-    // 1. Loading State
+    // 1. Loading Spinner
     if (_isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(
+        backgroundColor: Colors.white,
+        body: Center(child: CircularProgressIndicator()),
+      );
     }
+
+    final session = Supabase.instance.client.auth.currentSession;
 
     // 2. Not Logged In -> Login Screen
     if (session == null) {
@@ -215,13 +227,10 @@ class _AuthGateState extends State<AuthGate> {
 
     // 3. Logged In BUT No Profile -> Onboarding
     if (!_hasProfile) {
-      // Import your onboarding screen at the top of main.dart:
-      // import 'screens/onboarding_screen.dart';
       return const OnboardingScreen(); 
     }
 
     // 4. Fully Ready -> Main App
     return const MainScaffold();
   }
-  
 }
